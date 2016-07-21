@@ -799,6 +799,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_SupportEchoChannel				5184
 #define FreeRDP_SupportDisplayControl				5185
 #define FreeRDP_SupportGeometryTracking				5186
+#define FreeRDP_RDP2TCPArgs					5187
 
 /**
  * FreeRDP Settings Data Structure
@@ -1376,7 +1377,8 @@ struct rdp_settings
 	ALIGN64 BOOL SupportEchoChannel; /* 5184 */
 	ALIGN64 BOOL SupportDisplayControl; /* 5185 */
 	ALIGN64 BOOL SupportGeometryTracking; /* 5186 */
-	UINT64 padding5312[5312 - 5187]; /* 5187 */
+	ALIGN64 char *RDP2TCPArgs; /* 5187 */
+	UINT64 padding5312[5312 - 5188]; /* 5188 */
 
 	/**
 	 * WARNING: End of ABI stable zone!

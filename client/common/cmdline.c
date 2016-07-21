@@ -106,6 +106,7 @@ COMMAND_LINE_ARGUMENT_A args[] =
 	{ "multitouch", COMMAND_LINE_VALUE_BOOL, NULL, BoolValueFalse, NULL, -1, NULL, "Redirect multitouch input" },
 	{ "gestures", COMMAND_LINE_VALUE_BOOL, NULL, BoolValueFalse, NULL, -1, NULL, "Consume multitouch input locally" },
 	{ "echo", COMMAND_LINE_VALUE_FLAG, NULL, NULL, NULL, -1, "echo", "Echo channel" },
+	{ "rdp2tcp", COMMAND_LINE_VALUE_REQUIRED, "<executable path[:arg...]>", NULL, NULL, -1, NULL, "TCP redirection" },
 	{ "disp", COMMAND_LINE_VALUE_FLAG, NULL, NULL, NULL, -1, NULL, "Display control" },
 	{ "fonts", COMMAND_LINE_VALUE_BOOL, NULL, BoolValueFalse, NULL, -1, NULL, "Smooth fonts (ClearType)" },
 	{ "aero", COMMAND_LINE_VALUE_BOOL, NULL, NULL, BoolValueFalse, -1, NULL, "Desktop composition" },
@@ -260,6 +261,7 @@ int freerdp_client_print_command_line_help(int argc, char** argv)
 	printf("Serial Port Redirection: /serial:COM1,/dev/ttyS0\n");
 	printf("Parallel Port Redirection: /parallel:<device>\n");
 	printf("Printer Redirection: /printer:<device>,<driver>\n");
+	printf("TCP redirection: /rdp2tcp:/usr/bin/rdp2tcp\n");
 	printf("\n");
 
 	printf("Audio Output Redirection: /sound:sys:alsa\n");
@@ -691,6 +693,10 @@ int freerdp_client_command_line_post_filter(void* context, COMMAND_LINE_ARGUMENT
 	CommandLineSwitchCase(arg, "echo")
 	{
 		settings->SupportEchoChannel = TRUE;
+	}
+	CommandLineSwitchCase(arg, "rdp2tcp")
+	{
+		settings->RDP2TCPArgs = _strdup(arg->Value);
 	}
 	CommandLineSwitchCase(arg, "disp")
 	{
@@ -2082,6 +2088,9 @@ int freerdp_client_load_addins(rdpChannels* channels, rdpSettings* settings)
 		freerdp_client_load_static_channel_addin(channels, settings, "encomsp", settings);
 		freerdp_client_load_static_channel_addin(channels, settings, "remdesk", settings);
 	}
+
+	if (settings->RDP2TCPArgs)
+		freerdp_client_load_static_channel_addin(channels, settings, "rdp2tcp", settings->RDP2TCPArgs);
 
 	for (index = 0; index < settings->StaticChannelCount; index++)
 	{
