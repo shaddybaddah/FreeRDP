@@ -43,9 +43,8 @@
 #include <freerdp/log.h>
 #define TAG CLIENT_TAG("x11")
 
-int xf_keyboard_action_script_init(xfContext* xfc)
+BOOL xf_keyboard_action_script_init(xfContext* xfc)
 {
-	int exitCode;
 	FILE* keyScript;
 	char* keyCombination;
 	char buffer[1024] = { 0 };
@@ -61,34 +60,42 @@ int xf_keyboard_action_script_init(xfContext* xfc)
 		xfc->actionScript = _strdup("/usr/share/freerdp/action.sh");
 
 	if (!xfc->actionScript)
-		return 0;
+		return FALSE;
 
 	xfc->keyCombinations = ArrayList_New(TRUE);
+	if (!xfc->keyCombinations)
+		return FALSE;
+
 	ArrayList_Object(xfc->keyCombinations)->fnObjectFree = free;
 
 	sprintf_s(command, sizeof(command), "%s key", xfc->actionScript);
 
 	keyScript = popen(command, "r");
 
-	if (keyScript < 0)
+	if (!keyScript)
 	{
 		free(xfc->actionScript);
 		xfc->actionScript = NULL;
-		return 0;
+		return FALSE;
 	}
 
 	while (fgets(buffer, sizeof(buffer), keyScript) != NULL)
 	{
 		strtok(buffer, "\n");
 		keyCombination = _strdup(buffer);
-		ArrayList_Add(xfc->keyCombinations, keyCombination);
+		if (!keyCombination || ArrayList_Add(xfc->keyCombinations, keyCombination) < 0)
+		{
+			ArrayList_Free(xfc->keyCombinations);
+			free(xfc->actionScript);
+			xfc->actionScript = NULL;
+			pclose(keyScript);
+			return FALSE;
+		}
 	}
 
-	exitCode = pclose(keyScript);
+	pclose(keyScript);
+	return xf_event_action_script_init(xfc);
 
-	xf_event_action_script_init(xfc);
-
-	return 1;
 }
 
 void xf_keyboard_action_script_free(xfContext* xfc)
@@ -108,7 +115,7 @@ void xf_keyboard_action_script_free(xfContext* xfc)
 	}
 }
 
-void xf_keyboard_init(xfContext* xfc)
+BOOL xf_keyboard_init(xfContext* xfc)
 {
 	xf_keyboard_clear(xfc);
 
@@ -119,9 +126,11 @@ void xf_keyboard_init(xfContext* xfc)
 	if (xfc->modifierMap)
 		XFreeModifiermap(xfc->modifierMap);
 
-	xfc->modifierMap = XGetModifierMapping(xfc->display);
+	if (!(xfc->modifierMap = XGetModifierMapping(xfc->display)))
+		return FALSE;
 
 	xf_keyboard_action_script_init(xfc);
+	return TRUE;
 }
 
 void xf_keyboard_free(xfContext* xfc)
@@ -145,7 +154,7 @@ void xf_keyboard_key_press(xfContext* xfc, BYTE keycode, KeySym keysym)
 	if (keycode < 8)
 		return;
 
-	xfc->KeyboardState[keycode] = keysym;
+	xfc->KeyboardState[keycode] = TRUE;
 
 	if (xf_keyboard_handle_special_keys(xfc, keysym))
 		return;
@@ -158,7 +167,7 @@ void xf_keyboard_key_release(xfContext* xfc, BYTE keycode)
 	if (keycode < 8)
 		return;
 
-	xfc->KeyboardState[keycode] = NoSymbol;
+	xfc->KeyboardState[keycode] = FALSE;
 
 	xf_keyboard_send_key(xfc, FALSE, keycode);
 }
@@ -170,11 +179,17 @@ void xf_keyboard_release_all_keypress(xfContext* xfc)
 
 	for (keycode = 0; keycode < ARRAYSIZE(xfc->KeyboardState); keycode++)
 	{
-		if (xfc->KeyboardState[keycode] != NoSymbol)
+		if (xfc->KeyboardState[keycode])
 		{
 			rdp_scancode = freerdp_keyboard_get_rdp_scancode_from_x11_keycode(keycode);
+
+			// release tab before releasing the windows key.
+			// this stops the start menu from opening on unfocus event.
+			if (rdp_scancode == RDP_SCANCODE_LWIN)
+				freerdp_input_send_keyboard_event_ex(xfc->instance->input, FALSE, RDP_SCANCODE_TAB);
+
 			freerdp_input_send_keyboard_event_ex(xfc->instance->input, FALSE, rdp_scancode);
-			xfc->KeyboardState[keycode] = NoSymbol;
+			xfc->KeyboardState[keycode] = FALSE;
 		}
 	}
 }
@@ -182,7 +197,7 @@ void xf_keyboard_release_all_keypress(xfContext* xfc)
 BOOL xf_keyboard_key_pressed(xfContext* xfc, KeySym keysym)
 {
 	KeyCode keycode = XKeysymToKeycode(xfc->display, keysym);
-	return (xfc->KeyboardState[keycode] == keysym);
+	return xfc->KeyboardState[keycode];
 }
 
 void xf_keyboard_send_key(xfContext* xfc, BOOL down, BYTE keycode)
@@ -314,28 +329,30 @@ UINT32 xf_keyboard_get_toggle_keys_state(xfContext* xfc)
 void xf_keyboard_focus_in(xfContext* xfc)
 {
 	rdpInput* input;
-	UINT32 syncFlags;
-	int dummy, mouseX, mouseY;
-	Window wdummy;
-	UINT32 state = 0;
+	UINT32 syncFlags, state;
+	Window w;
+	int d, x, y;
 
-	if (xfc->display && xfc->window)
+	if (!xfc->display || !xfc->window)
+		return;
+
+	input = xfc->instance->input;
+	syncFlags = xf_keyboard_get_toggle_keys_state(xfc);
+
+	input->FocusInEvent(input, syncFlags);
+
+	/* finish with a mouse pointer position like mstsc.exe if required */
+
+	if (xfc->remote_app)
+		return;
+
+	if (XQueryPointer(xfc->display, xfc->window->handle, &w, &w, &d, &d, &x, &y, &state))
 	{
-		input = xfc->instance->input;
-		syncFlags = xf_keyboard_get_toggle_keys_state(xfc);
-
-		if (!xfc->remote_app)
+		if (x >= 0 && x < xfc->window->width && y >= 0 && y < xfc->window->height)
 		{
-			XQueryPointer(xfc->display, xfc->window->handle, &wdummy, &wdummy,
-					&mouseX, &mouseY, &dummy, &dummy, &state);
+			xf_event_adjust_coordinates(xfc, &x, &y);
+			input->MouseEvent(input, PTR_FLAGS_MOVE, x, y);
 		}
-		else
-		{
-			XQueryPointer(xfc->display, DefaultRootWindow(xfc->display),
-				&wdummy, &wdummy, &dummy, &dummy, &dummy, &dummy, &state);
-		}
-
-		input->FocusInEvent(input, syncFlags, mouseX, mouseY);
 	}
 }
 
@@ -364,6 +381,10 @@ int xf_keyboard_execute_action_script(xfContext* xfc, XF_MODIFIER_KEYS* mod, Key
 	}
 
 	keyStr = XKeysymToString(keysym);
+	if (keyStr == 0)
+	{
+		return 1;
+	}
 
 	if (mod->Shift)
 		strcat(combination, "Shift+");
@@ -397,7 +418,7 @@ int xf_keyboard_execute_action_script(xfContext* xfc, XF_MODIFIER_KEYS* mod, Key
 
 	keyScript = popen(command, "r");
 
-	if (keyScript < 0)
+	if (!keyScript)
 		return -1;
 
 	while (fgets(buffer, sizeof(buffer), keyScript) != NULL)
@@ -445,17 +466,17 @@ BOOL xf_keyboard_handle_special_keys(xfContext* xfc, KeySym keysym)
 		return TRUE;
 	}
 
-	if(xfc->fullscreen_toggle)
+	if(!xfc->remote_app && xfc->fullscreen_toggle)
 	{
-            if (keysym == XK_Return)
-            {
-                    if (mod.Ctrl && mod.Alt)
-                    {
-                            /* Ctrl-Alt-Enter: toggle full screen */
-                            xf_toggle_fullscreen(xfc);
-                            return TRUE;
-                    }
-            }
+		if (keysym == XK_Return)
+		{
+			if (mod.Ctrl && mod.Alt)
+			{
+				/* Ctrl-Alt-Enter: toggle full screen */
+				xf_toggle_fullscreen(xfc);
+				return TRUE;
+			}
+		}
 	}
 
 	if ((keysym == XK_c) || (keysym == XK_C))
@@ -468,144 +489,84 @@ BOOL xf_keyboard_handle_special_keys(xfContext* xfc, KeySym keysym)
 		}
 	}
 
-	if (keysym == XK_period)
+#if 0 /* set to 1 to enable multi touch gesture simulation via keyboard */
+#ifdef WITH_XRENDER
+	if (!xfc->remote_app && xfc->settings->MultiTouchGestures)
 	{
 		if (mod.Ctrl && mod.Alt)
 		{
-			/* Zoom In (scale larger) */
+			int pdx = 0;
+			int pdy = 0;
+			int zdx = 0;
+			int zdy = 0;
 
-			double s = xfc->settings->ScalingFactor;
-
-			s += 0.1;
-
-			if (s > 2.0)
-				s = 2.0;
-			
-			xfc->settings->ScalingFactor = s;
-			
-			xfc->currentWidth = xfc->originalWidth * s;
-			xfc->currentHeight = xfc->originalHeight * s;
-			
-			xf_transform_window(xfc);
-			
+			switch(keysym)
 			{
-				ResizeWindowEventArgs e;
-				
-				EventArgsInit(&e, "xfreerdp");
-				e.width = (int) xfc->originalWidth * xfc->settings->ScalingFactor;
-				e.height = (int) xfc->originalHeight * xfc->settings->ScalingFactor;
-				PubSub_OnResizeWindow(((rdpContext*) xfc)->pubSub, xfc, &e);
+				case XK_0:	/* Ctrl-Alt-0: Reset scaling and panning */
+					xfc->scaledWidth = xfc->sessionWidth;
+					xfc->scaledHeight = xfc->sessionHeight;
+					xfc->offset_x = 0;
+					xfc->offset_y = 0;
+					if (!xfc->fullscreen && (xfc->sessionWidth != xfc->window->width ||
+						 xfc->sessionHeight != xfc->window->height))
+					{
+						xf_ResizeDesktopWindow(xfc, xfc->window, xfc->sessionWidth, xfc->sessionHeight);
+					}
+					xf_draw_screen(xfc, 0, 0, xfc->sessionWidth, xfc->sessionHeight);
+					return TRUE;
+
+				case XK_1:	/* Ctrl-Alt-1: Zoom in */
+					zdx = zdy = 10;
+					break;
+
+				case XK_2:	/* Ctrl-Alt-2: Zoom out */
+					zdx = zdy = -10;
+					break;
+
+				case XK_3:	/* Ctrl-Alt-3: Pan left */
+					pdx = -10;
+					break;
+
+				case XK_4:	/* Ctrl-Alt-4: Pan right */
+					pdx = 10;
+					break;
+
+				case XK_5:	/* Ctrl-Alt-5: Pan up */
+					pdy = -10;
+					break;
+
+				case XK_6:	/* Ctrl-Alt-6: Pan up */
+					pdy = 10;
+					break;
 			}
-			xf_draw_screen_scaled(xfc, 0, 0, 0, 0, FALSE);
-			return TRUE;
-		}
-	}
-	
-	if (keysym == XK_comma)
-	{
-		if (mod.Ctrl && mod.Alt)
-		{
-			/* Zoom Out (scale smaller) */
 
-			double s = xfc->settings->ScalingFactor;
-
-			s -= 0.1;
-
-			if (s < 0.5)
-				s = 0.5;
-			
-			xfc->settings->ScalingFactor = s;
-			
-			xfc->currentWidth = xfc->originalWidth * s;
-			xfc->currentHeight = xfc->originalHeight * s;
-			
-			xf_transform_window(xfc);
-			
-			{
-				ResizeWindowEventArgs e;
-				
-				EventArgsInit(&e, "xfreerdp");
-				e.width = (int) xfc->originalWidth * xfc->settings->ScalingFactor;
-				e.height = (int) xfc->originalHeight * xfc->settings->ScalingFactor;
-				PubSub_OnResizeWindow(((rdpContext*) xfc)->pubSub, xfc, &e);
-			}
-			
-			xf_draw_screen_scaled(xfc, 0, 0, 0, 0, FALSE);
-			return TRUE;
-		}
-	}
-	
-	if (keysym == XK_KP_4)
-	{
-		if (mod.Ctrl && mod.Alt)
-		{
-			
+			if (pdx != 0 || pdy != 0)
 			{
 				PanningChangeEventArgs e;
-				
 				EventArgsInit(&e, "xfreerdp");
-				e.XPan = -5;
-				e.YPan = 0;
+				e.dx = pdx;
+				e.dy = pdy;
 				PubSub_OnPanningChange(((rdpContext*) xfc)->pubSub, xfc, &e);
+				return TRUE;
 			}
-			
-			return TRUE;
-		}
-	}
-	
-	if (keysym == XK_KP_6)
-	{
-		if (mod.Ctrl && mod.Alt)
-		{
-			
+
+			if (zdx != 0 || zdy != 0)
 			{
-				PanningChangeEventArgs e;
-				
+				ZoomingChangeEventArgs e;
 				EventArgsInit(&e, "xfreerdp");
-				e.XPan = 5;
-				e.YPan = 0;
-				PubSub_OnPanningChange(((rdpContext*) xfc)->pubSub, xfc, &e);
+				e.dx = zdx;
+				e.dy = zdy;
+				PubSub_OnZoomingChange(((rdpContext*) xfc)->pubSub, xfc, &e);
+				return TRUE;
 			}
-			return TRUE;
 		}
 	}
-	
-	if (keysym == XK_KP_8)
-	{
-		if (mod.Ctrl && mod.Alt)
-		{
-			{
-				PanningChangeEventArgs e;
-				
-				EventArgsInit(&e, "xfreerdp");
-				e.XPan = 0;
-				e.YPan = -5;
-				PubSub_OnPanningChange(((rdpContext*) xfc)->pubSub, xfc, &e);
-			}
-			return TRUE;
-		}
-	}
-	
-	if (keysym == XK_KP_2)
-	{
-		if (mod.Ctrl && mod.Alt)
-		{
-			{
-				PanningChangeEventArgs e;
-				
-				EventArgsInit(&e, "xfreerdp");
-				e.XPan = 0;
-				e.YPan = 5;
-				PubSub_OnPanningChange(((rdpContext*) xfc)->pubSub, xfc, &e);
-			}
-			return TRUE;
-		}
-	}
-	
+#endif /* WITH_XRENDER defined */
+#endif /* pinch/zoom/pan simulation */
 	return FALSE;
 }
 
-void xf_keyboard_set_indicators(rdpContext* context, UINT16 led_flags)
+BOOL xf_keyboard_set_indicators(rdpContext* context, UINT16 led_flags)
 {
 	xfContext* xfc = (xfContext*) context;
 
@@ -613,4 +574,5 @@ void xf_keyboard_set_indicators(rdpContext* context, UINT16 led_flags)
 	xf_keyboard_set_key_state(xfc, led_flags & KBD_SYNC_NUM_LOCK, XK_Num_Lock);
 	xf_keyboard_set_key_state(xfc, led_flags & KBD_SYNC_CAPS_LOCK, XK_Caps_Lock);
 	xf_keyboard_set_key_state(xfc, led_flags & KBD_SYNC_KANA_LOCK, XK_Kana_Lock);
+	return TRUE;
 }

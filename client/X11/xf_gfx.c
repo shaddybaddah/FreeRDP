@@ -26,57 +26,81 @@
 
 #define TAG CLIENT_TAG("x11")
 
-int xf_ResetGraphics(RdpgfxClientContext* context, RDPGFX_RESET_GRAPHICS_PDU* resetGraphics)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_ResetGraphics(RdpgfxClientContext* context, RDPGFX_RESET_GRAPHICS_PDU* resetGraphics)
 {
+	int index;
+	UINT16 count;
+	xfGfxSurface* surface;
+	UINT16* pSurfaceIds = NULL;
 	xfContext* xfc = (xfContext*) context->custom;
 
-	freerdp_client_codecs_reset(xfc->codecs, FREERDP_CODEC_ALL);
+	context->GetSurfaceIds(context, &pSurfaceIds, &count);
 
-	region16_init(&(xfc->invalidRegion));
+	for (index = 0; index < count; index++)
+	{
+		surface = (xfGfxSurface*) context->GetSurfaceData(context, pSurfaceIds[index]);
+
+		if (!surface || !surface->outputMapped)
+			continue;
+
+		if (!freerdp_client_codecs_reset(surface->codecs, FREERDP_CODEC_ALL,
+						 surface->width, surface->height))
+		{
+			free(pSurfaceIds);
+			return ERROR_INTERNAL_ERROR;
+		}
+
+		region16_clear(&surface->invalidRegion);
+	}
+
+	free(pSurfaceIds);
+
+	if (!freerdp_client_codecs_reset(xfc->codecs, FREERDP_CODEC_ALL,
+					 xfc->settings->DesktopWidth,
+					 xfc->settings->DesktopHeight))
+		return ERROR_INTERNAL_ERROR;
 
 	xfc->graphicsReset = TRUE;
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_OutputUpdate(xfContext* xfc)
+static int xf_OutputUpdate(xfContext* xfc, xfGfxSurface* surface)
 {
 	UINT16 width, height;
-	xfGfxSurface* surface;
+	UINT32 surfaceX, surfaceY;
 	RECTANGLE_16 surfaceRect;
 	const RECTANGLE_16* extents;
 
-	if (!xfc->graphicsReset)
-		return 1;
+	surfaceX = surface->outputOriginX;
+	surfaceY = surface->outputOriginY;
 
-	surface = (xfGfxSurface*) xfc->gfx->GetSurfaceData(xfc->gfx, xfc->outputSurfaceId);
-
-	if (!surface)
-		return -1;
-
-	surfaceRect.left = 0;
-	surfaceRect.top = 0;
-	surfaceRect.right = xfc->width;
-	surfaceRect.bottom = xfc->height;
-
-	region16_intersect_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &surfaceRect);
+	surfaceRect.left = surfaceX;
+	surfaceRect.top = surfaceY;
+	surfaceRect.right = surfaceX + surface->width;
+	surfaceRect.bottom = surfaceY + surface->height;
 
 	XSetClipMask(xfc->display, xfc->gc, None);
 	XSetFunction(xfc->display, xfc->gc, GXcopy);
 	XSetFillStyle(xfc->display, xfc->gc, FillSolid);
 
-	if (!region16_is_empty(&(xfc->invalidRegion)))
+	if (!region16_is_empty(&surface->invalidRegion))
 	{
-		extents = region16_extents(&(xfc->invalidRegion));
+		extents = region16_extents(&surface->invalidRegion);
 
 		width = extents->right - extents->left;
 		height = extents->bottom - extents->top;
 
-		if (width > xfc->width)
-			width = xfc->width;
+		if (width > surface->width)
+			width = surface->width;
 
-		if (height > xfc->height)
-			height = xfc->height;
+		if (height > surface->height)
+			height = surface->height;
 
 		if (surface->stage)
 		{
@@ -84,55 +108,149 @@ int xf_OutputUpdate(xfContext* xfc)
 				surface->width, surface->height, surface->data, surface->format, surface->scanline, 0, 0, NULL);
 		}
 
-		XPutImage(xfc->display, xfc->drawable, xfc->gc, surface->image,
-				extents->left, extents->top, extents->left, extents->top, width, height);
+#ifdef WITH_XRENDER
+		if (xfc->settings->SmartSizing || xfc->settings->MultiTouchGestures)
+		{
+			XPutImage(xfc->display, xfc->primary, xfc->gc, surface->image,
+				extents->left, extents->top, extents->left + surfaceX, extents->top + surfaceY, width, height);
+
+			xf_draw_screen(xfc, extents->left, extents->top, width, height);
+		}
+		else
+#endif
+		{
+			XPutImage(xfc->display, xfc->drawable, xfc->gc, surface->image,
+				extents->left, extents->top, extents->left + surfaceX, extents->top + surfaceY, width, height);
+		}
 	}
 
-	region16_clear(&(xfc->invalidRegion));
+	region16_clear(&surface->invalidRegion);
 
 	XSetClipMask(xfc->display, xfc->gc, None);
-	XSync(xfc->display, True);
+	XSync(xfc->display, False);
 
 	return 1;
 }
 
+static int xf_UpdateSurfaces(xfContext* xfc)
+{
+	UINT16 count;
+	int index;
+	int status = 1;
+	xfGfxSurface* surface;
+	UINT16* pSurfaceIds = NULL;
+	RdpgfxClientContext* context = xfc->gfx;
+
+	if (!xfc->graphicsReset)
+		return 1;
+
+	context->GetSurfaceIds(context, &pSurfaceIds, &count);
+
+	for (index = 0; index < count; index++)
+	{
+		surface = (xfGfxSurface*) context->GetSurfaceData(context, pSurfaceIds[index]);
+
+		if (!surface || !surface->outputMapped)
+			continue;
+
+		status = xf_OutputUpdate(xfc, surface);
+
+		if (status < 0)
+			break;
+	}
+
+	free(pSurfaceIds);
+
+	return status;
+}
+
 int xf_OutputExpose(xfContext* xfc, int x, int y, int width, int height)
 {
+	UINT16 count;
+	int index;
+	int status = 1;
+	xfGfxSurface* surface;
 	RECTANGLE_16 invalidRect;
+	RECTANGLE_16 surfaceRect;
+	RECTANGLE_16 intersection;
+	UINT16* pSurfaceIds = NULL;
+	RdpgfxClientContext* context = xfc->gfx;
 
 	invalidRect.left = x;
 	invalidRect.top = y;
 	invalidRect.right = x + width;
 	invalidRect.bottom = y + height;
 
-	region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+	context->GetSurfaceIds(context, &pSurfaceIds, &count);
 
-	xf_OutputUpdate(xfc);
+	for (index = 0; index < count; index++)
+	{
+		surface = (xfGfxSurface*) context->GetSurfaceData(context, pSurfaceIds[index]);
 
-	return 1;
+		if (!surface || !surface->outputMapped)
+			continue;
+
+		surfaceRect.left = surface->outputOriginX;
+		surfaceRect.top = surface->outputOriginY;
+		surfaceRect.right = surface->outputOriginX + surface->width;
+		surfaceRect.bottom = surface->outputOriginY + surface->height;
+
+		if (rectangles_intersection(&invalidRect, &surfaceRect, &intersection))
+		{
+			/* Invalid rects are specified relative to surface origin */
+			intersection.left -= surfaceRect.left;
+			intersection.top -= surfaceRect.top;
+			intersection.right -= surfaceRect.left;
+			intersection.bottom -= surfaceRect.top;
+
+			region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &intersection);
+		}
+	}
+
+	free(pSurfaceIds);
+
+	if (xf_UpdateSurfaces(xfc) < 0)
+		status = -1;
+
+	return status;
 }
 
-int xf_StartFrame(RdpgfxClientContext* context, RDPGFX_START_FRAME_PDU* startFrame)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_StartFrame(RdpgfxClientContext* context, RDPGFX_START_FRAME_PDU* startFrame)
 {
 	xfContext* xfc = (xfContext*) context->custom;
 
 	xfc->inGfxFrame = TRUE;
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_EndFrame(RdpgfxClientContext* context, RDPGFX_END_FRAME_PDU* endFrame)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_EndFrame(RdpgfxClientContext* context, RDPGFX_END_FRAME_PDU* endFrame)
 {
 	xfContext* xfc = (xfContext*) context->custom;
 
-	xf_OutputUpdate(xfc);
+	xf_UpdateSurfaces(xfc);
 
 	xfc->inGfxFrame = FALSE;
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_Uncompressed(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_Uncompressed(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	xfGfxSurface* surface;
 	RECTANGLE_16 invalidRect;
@@ -140,7 +258,7 @@ int xf_SurfaceCommand_Uncompressed(xfContext* xfc, RdpgfxClientContext* context,
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
 	freerdp_image_copy(surface->data, surface->format, surface->scanline, cmd->left, cmd->top,
 			cmd->width, cmd->height, cmd->data, PIXEL_FORMAT_XRGB32, -1, 0, 0, NULL);
@@ -150,15 +268,20 @@ int xf_SurfaceCommand_Uncompressed(xfContext* xfc, RdpgfxClientContext* context,
 	invalidRect.right = cmd->right;
 	invalidRect.bottom = cmd->bottom;
 
-	region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+	region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &invalidRect);
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_RemoteFX(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_RemoteFX(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	int j;
 	UINT16 i;
@@ -175,17 +298,20 @@ int xf_SurfaceCommand_RemoteFX(xfContext* xfc, RdpgfxClientContext* context, RDP
 	REGION16 clippingRects;
 	RECTANGLE_16 clippingRect;
 
-	freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_REMOTEFX);
-
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
-	message = rfx_process_message(xfc->codecs->rfx, cmd->data, cmd->length);
+	if (!freerdp_client_codecs_prepare(surface->codecs, FREERDP_CODEC_REMOTEFX,
+									   surface->width, surface->height))
+		return ERROR_INTERNAL_ERROR;
 
-	if (!message)
-		return -1;
+	if (!(message = rfx_process_message(surface->codecs->rfx, cmd->data, cmd->length)))
+	{
+		WLog_ERR(TAG, "Failed to process RemoteFX message");
+		return ERROR_INTERNAL_ERROR;
+	}
 
 	region16_init(&clippingRects);
 
@@ -225,33 +351,43 @@ int xf_SurfaceCommand_RemoteFX(xfContext* xfc, RdpgfxClientContext* context, RDP
 					nXDst, nYDst, nWidth, nHeight,
 					tile->data, PIXEL_FORMAT_XRGB32, 64 * 4, 0, 0, NULL);
 
-			region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &updateRects[j]);
+			region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &updateRects[j]);
 		}
 
 		region16_uninit(&updateRegion);
 	}
 
-	rfx_message_free(xfc->codecs->rfx, message);
+	rfx_message_free(surface->codecs->rfx, message);
+
+	region16_uninit(&clippingRects);
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_ClearCodec(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_ClearCodec(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	int status;
 	BYTE* DstData = NULL;
 	xfGfxSurface* surface;
 	RECTANGLE_16 invalidRect;
 
-	freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_CLEARCODEC);
-
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
+
+	if (!freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_CLEARCODEC,
+									   xfc->settings->DesktopWidth,
+									   xfc->settings->DesktopHeight))
+		return ERROR_INTERNAL_ERROR;
 
 	DstData = surface->data;
 
@@ -260,8 +396,8 @@ int xf_SurfaceCommand_ClearCodec(xfContext* xfc, RdpgfxClientContext* context, R
 
 	if (status < 0)
 	{
-		WLog_ERR(TAG, "clear_decompress failure: %d\n", status);
-		return -1;
+		WLog_ERR(TAG, "clear_decompress failure: %d", status);
+		return ERROR_INTERNAL_ERROR;
 	}
 
 	invalidRect.left = cmd->left;
@@ -269,31 +405,38 @@ int xf_SurfaceCommand_ClearCodec(xfContext* xfc, RdpgfxClientContext* context, R
 	invalidRect.right = cmd->right;
 	invalidRect.bottom = cmd->bottom;
 
-	region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+	region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &invalidRect);
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_Planar(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_Planar(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	int status;
 	BYTE* DstData = NULL;
 	xfGfxSurface* surface;
 	RECTANGLE_16 invalidRect;
 
-	freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_PLANAR);
-
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
+
+	if (!freerdp_client_codecs_prepare(surface->codecs, FREERDP_CODEC_PLANAR,
+									   surface->width, surface->height))
+		return ERROR_INTERNAL_ERROR;
 
 	DstData = surface->data;
 
-	status = planar_decompress(xfc->codecs->planar, cmd->data, cmd->length, &DstData,
+	status = planar_decompress(surface->codecs->planar, cmd->data, cmd->length, &DstData,
 			surface->format, surface->scanline, cmd->left, cmd->top, cmd->width, cmd->height, FALSE);
 
 	invalidRect.left = cmd->left;
@@ -301,76 +444,160 @@ int xf_SurfaceCommand_Planar(xfContext* xfc, RdpgfxClientContext* context, RDPGF
 	invalidRect.right = cmd->right;
 	invalidRect.bottom = cmd->bottom;
 
-	region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+	region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &invalidRect);
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_H264(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_AVC420(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	int status;
 	UINT32 i;
-	BYTE* DstData = NULL;
-	H264_CONTEXT* h264;
 	xfGfxSurface* surface;
 	RDPGFX_H264_METABLOCK* meta;
-	RDPGFX_H264_BITMAP_STREAM* bs;
-
-	freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_H264);
-
-	h264 = xfc->codecs->h264;
-
-	bs = (RDPGFX_H264_BITMAP_STREAM*) cmd->extra;
-
-	if (!bs)
-		return -1;
-
-	meta = &(bs->meta);
+	RDPGFX_AVC420_BITMAP_STREAM* bs;
 
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
-	DstData = surface->data;
+	if (!freerdp_client_codecs_prepare(surface->codecs, FREERDP_CODEC_AVC420,
+									   surface->width, surface->height))
+		return ERROR_INTERNAL_ERROR;
 
-	status = h264_decompress(xfc->codecs->h264, bs->data, bs->length, &DstData,
-			surface->format, surface->scanline , surface->height, meta->regionRects, meta->numRegionRects);
+	bs = (RDPGFX_AVC420_BITMAP_STREAM*) cmd->extra;
+
+	if (!bs)
+		return ERROR_INTERNAL_ERROR;
+
+	meta = &(bs->meta);
+
+	status = avc420_decompress(surface->codecs->h264, bs->data, bs->length,
+				   surface->data, surface->format,
+				   surface->scanline , surface->width,
+				   surface->height, meta->regionRects,
+				   meta->numRegionRects);
 
 	if (status < 0)
 	{
-		WLog_ERR(TAG, "h264_decompress failure: %d",status);
-		return -1;
+		WLog_WARN(TAG, "avc420_decompress failure: %d, ignoring update.", status);
+		return CHANNEL_RC_OK;
 	}
 
 	for (i = 0; i < meta->numRegionRects; i++)
 	{
-		region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), (RECTANGLE_16*) &(meta->regionRects[i]));
+		region16_union_rect(&surface->invalidRegion,
+				    &surface->invalidRegion,
+				    &(meta->regionRects[i]));
 	}
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_Alpha(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_AVC444(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+{
+	int status;
+	UINT32 i;
+	xfGfxSurface* surface;
+	RDPGFX_AVC444_BITMAP_STREAM* bs;
+	RDPGFX_AVC420_BITMAP_STREAM* avc1;
+	RDPGFX_AVC420_BITMAP_STREAM* avc2;
+	RDPGFX_H264_METABLOCK* meta1;
+	RDPGFX_H264_METABLOCK* meta2;
+	RECTANGLE_16* regionRects = NULL;
+
+	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
+
+	if (!surface)
+		return ERROR_INTERNAL_ERROR;
+
+	if (!freerdp_client_codecs_prepare(surface->codecs, FREERDP_CODEC_AVC444,
+									   surface->width, surface->height))
+		return ERROR_INTERNAL_ERROR;
+
+	bs = (RDPGFX_AVC444_BITMAP_STREAM*) cmd->extra;
+
+	if (!bs)
+		return ERROR_INTERNAL_ERROR;
+
+	avc1 = &bs->bitstream[0];
+	avc2 = &bs->bitstream[1];
+	meta1 = &avc1->meta;
+	meta2 = &avc2->meta;
+
+	status = avc444_decompress(surface->codecs->h264, bs->LC,
+				   meta1->regionRects, meta1->numRegionRects,
+				   avc1->data, avc1->length,
+				   meta2->regionRects, meta2->numRegionRects,
+				   avc2->data, avc2->length, surface->data,
+				   surface->format, surface->scanline,
+				   surface->width, surface->height);
+
+	if (status < 0)
+	{
+		WLog_WARN(TAG, "avc444_decompress failure: %d, ignoring update.", status);
+		return CHANNEL_RC_OK;
+	}
+
+	for (i = 0; i < meta1->numRegionRects; i++)
+	{
+		region16_union_rect(&surface->invalidRegion,
+				    &surface->invalidRegion,
+				    &(meta1->regionRects[i]));
+	}
+	for (i = 0; i < meta2->numRegionRects; i++)
+	{
+		region16_union_rect(&surface->invalidRegion,
+				    &surface->invalidRegion,
+				    &(meta2->regionRects[i]));
+	}
+
+	if (!xfc->inGfxFrame)
+		xf_UpdateSurfaces(xfc);
+
+	free (regionRects);
+
+	return CHANNEL_RC_OK;
+}
+
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_Alpha(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	int status = 0;
 	xfGfxSurface* surface;
 	RECTANGLE_16 invalidRect;
 
-	freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_ALPHACODEC);
-
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
-	WLog_DBG(TAG, "xf_SurfaceCommand_Alpha: status: %d\n", status);
+	if (!freerdp_client_codecs_prepare(surface->codecs, FREERDP_CODEC_ALPHACODEC,
+									   surface->width, surface->height))
+		return ERROR_INTERNAL_ERROR;
+
+	WLog_DBG(TAG, "xf_SurfaceCommand_Alpha: status: %d", status);
 	/* fill with green for now to distinguish from the rest */
 
 	freerdp_image_fill(surface->data, PIXEL_FORMAT_XRGB32, surface->scanline,
@@ -381,15 +608,20 @@ int xf_SurfaceCommand_Alpha(xfContext* xfc, RdpgfxClientContext* context, RDPGFX
 	invalidRect.right = cmd->right;
 	invalidRect.bottom = cmd->bottom;
 
-	region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+	region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &invalidRect);
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand_Progressive(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand_Progressive(xfContext* xfc, RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	int i, j;
 	int status;
@@ -408,27 +640,29 @@ int xf_SurfaceCommand_Progressive(xfContext* xfc, RdpgfxClientContext* context, 
 	RFX_PROGRESSIVE_TILE* tile;
 	PROGRESSIVE_BLOCK_REGION* region;
 
-	freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_PROGRESSIVE);
-
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, cmd->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
-	progressive_create_surface_context(xfc->codecs->progressive, cmd->surfaceId, surface->width, surface->height);
+	if (!freerdp_client_codecs_prepare(surface->codecs, FREERDP_CODEC_PROGRESSIVE,
+									   surface->width, surface->height))
+		return ERROR_INTERNAL_ERROR;
+
+	progressive_create_surface_context(surface->codecs->progressive, cmd->surfaceId, surface->width, surface->height);
 
 	DstData = surface->data;
 
-	status = progressive_decompress(xfc->codecs->progressive, cmd->data, cmd->length, &DstData,
+	status = progressive_decompress(surface->codecs->progressive, cmd->data, cmd->length, &DstData,
 			surface->format, surface->scanline, cmd->left, cmd->top, cmd->width, cmd->height, cmd->surfaceId);
 
 	if (status < 0)
 	{
 		WLog_ERR(TAG, "progressive_decompress failure: %d", status);
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 	}
 
-	region = &(xfc->codecs->progressive->region);
+	region = &(surface->codecs->progressive->region);
 
 	region16_init(&clippingRects);
 
@@ -471,21 +705,28 @@ int xf_SurfaceCommand_Progressive(xfContext* xfc, RdpgfxClientContext* context, 
 					surface->scanline, nXDst, nYDst, nWidth, nHeight,
 					tile->data, PIXEL_FORMAT_XRGB32, 64 * 4, nXSrc, nYSrc, NULL);
 
-			region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &updateRects[j]);
+			region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &updateRects[j]);
 		}
 
 		region16_uninit(&updateRegion);
 	}
 
-	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+	region16_uninit(&clippingRects);
 
-	return 1;
+	if (!xfc->inGfxFrame)
+		xf_UpdateSurfaces(xfc);
+
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceCommand(RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceCommand(RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 {
-	int status = 1;
+	UINT status = CHANNEL_RC_OK;
 	xfContext* xfc = (xfContext*) context->custom;
 
 	switch (cmd->codecId)
@@ -506,8 +747,12 @@ int xf_SurfaceCommand(RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 			status = xf_SurfaceCommand_Planar(xfc, context, cmd);
 			break;
 
-		case RDPGFX_CODECID_H264:
-			status = xf_SurfaceCommand_H264(xfc, context, cmd);
+		case RDPGFX_CODECID_AVC420:
+			status = xf_SurfaceCommand_AVC420(xfc, context, cmd);
+			break;
+
+		case RDPGFX_CODECID_AVC444:
+			status = xf_SurfaceCommand_AVC444(xfc, context, cmd);
 			break;
 
 		case RDPGFX_CODECID_ALPHA:
@@ -519,18 +764,33 @@ int xf_SurfaceCommand(RdpgfxClientContext* context, RDPGFX_SURFACE_COMMAND* cmd)
 			break;
 
 		case RDPGFX_CODECID_CAPROGRESSIVE_V2:
+			WLog_WARN(TAG, "SurfaceCommand %08X not implemented", cmd->codecId);
+			break;
+
+		default:
+			WLog_WARN(TAG, "Invalid SurfaceCommand %08X", cmd->codecId);
 			break;
 	}
 
-	return 1;
+	return status;
 }
 
-int xf_DeleteEncodingContext(RdpgfxClientContext* context, RDPGFX_DELETE_ENCODING_CONTEXT_PDU* deleteEncodingContext)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_DeleteEncodingContext(RdpgfxClientContext* context, RDPGFX_DELETE_ENCODING_CONTEXT_PDU* deleteEncodingContext)
 {
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_CreateSurface(RdpgfxClientContext* context, RDPGFX_CREATE_SURFACE_PDU* createSurface)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_CreateSurface(RdpgfxClientContext* context, RDPGFX_CREATE_SURFACE_PDU* createSurface)
 {
 	size_t size;
 	UINT32 bytesPerPixel;
@@ -540,7 +800,15 @@ int xf_CreateSurface(RdpgfxClientContext* context, RDPGFX_CREATE_SURFACE_PDU* cr
 	surface = (xfGfxSurface*) calloc(1, sizeof(xfGfxSurface));
 
 	if (!surface)
-		return -1;
+		return CHANNEL_RC_NO_MEMORY;
+
+	surface->codecs = codecs_new((rdpContext*) xfc);
+
+	if (!surface->codecs)
+	{
+		free (surface);
+		return CHANNEL_RC_NO_MEMORY;
+	}
 
 	surface->surfaceId = createSurface->surfaceId;
 	surface->width = (UINT32) createSurface->width;
@@ -555,7 +823,10 @@ int xf_CreateSurface(RdpgfxClientContext* context, RDPGFX_CREATE_SURFACE_PDU* cr
 	surface->data = (BYTE*) _aligned_malloc(size, 16);
 
 	if (!surface->data)
-		return -1;
+	{
+		free(surface);
+		return CHANNEL_RC_NO_MEMORY;
+	}
 
 	ZeroMemory(surface->data, size);
 
@@ -574,7 +845,11 @@ int xf_CreateSurface(RdpgfxClientContext* context, RDPGFX_CREATE_SURFACE_PDU* cr
 		surface->stage = (BYTE*) _aligned_malloc(size, 16);
 
 		if (!surface->stage)
-			return -1;
+		{
+			free(surface->data);
+			free(surface);
+			return CHANNEL_RC_NO_MEMORY;
+		}
 
 		ZeroMemory(surface->stage, size);
 
@@ -582,15 +857,24 @@ int xf_CreateSurface(RdpgfxClientContext* context, RDPGFX_CREATE_SURFACE_PDU* cr
 				(char*) surface->stage, surface->width, surface->height, xfc->scanline_pad, surface->stageStep);
 	}
 
+	surface->outputMapped = FALSE;
+
+	region16_init(&surface->invalidRegion);
+
 	context->SetSurfaceData(context, surface->surfaceId, (void*) surface);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_DeleteSurface(RdpgfxClientContext* context, RDPGFX_DELETE_SURFACE_PDU* deleteSurface)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_DeleteSurface(RdpgfxClientContext* context, RDPGFX_DELETE_SURFACE_PDU* deleteSurface)
 {
+	rdpCodecs* codecs = NULL;
 	xfGfxSurface* surface = NULL;
-	xfContext* xfc = (xfContext*) context->custom;
 
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, deleteSurface->surfaceId);
 
@@ -599,24 +883,33 @@ int xf_DeleteSurface(RdpgfxClientContext* context, RDPGFX_DELETE_SURFACE_PDU* de
 		XFree(surface->image);
 		_aligned_free(surface->data);
 		_aligned_free(surface->stage);
+		region16_uninit(&surface->invalidRegion);
+		codecs = surface->codecs;
 		free(surface);
 	}
 
 	context->SetSurfaceData(context, deleteSurface->surfaceId, NULL);
 
-	if (xfc->codecs->progressive)
-		progressive_delete_surface_context(xfc->codecs->progressive, deleteSurface->surfaceId);
+	if (codecs && codecs->progressive)
+		progressive_delete_surface_context(codecs->progressive, deleteSurface->surfaceId);
 
-	return 1;
+	codecs_free(codecs);
+
+	return CHANNEL_RC_OK;
 }
 
-int xf_SolidFill(RdpgfxClientContext* context, RDPGFX_SOLID_FILL_PDU* solidFill)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SolidFill(RdpgfxClientContext* context, RDPGFX_SOLID_FILL_PDU* solidFill)
 {
 	UINT16 index;
 	UINT32 color;
 	BYTE a, r, g, b;
 	int nWidth, nHeight;
-	RDPGFX_RECT16* rect;
+	RECTANGLE_16* rect;
 	xfGfxSurface* surface;
 	RECTANGLE_16 invalidRect;
 	xfContext* xfc = (xfContext*) context->custom;
@@ -624,7 +917,7 @@ int xf_SolidFill(RdpgfxClientContext* context, RDPGFX_SOLID_FILL_PDU* solidFill)
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, solidFill->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
 	b = solidFill->fillPixel.B;
 	g = solidFill->fillPixel.G;
@@ -648,21 +941,26 @@ int xf_SolidFill(RdpgfxClientContext* context, RDPGFX_SOLID_FILL_PDU* solidFill)
 		freerdp_image_fill(surface->data, surface->format, surface->scanline,
 				rect->left, rect->top, nWidth, nHeight, color);
 
-		region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+		region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &invalidRect);
 	}
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceToSurface(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_SURFACE_PDU* surfaceToSurface)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceToSurface(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_SURFACE_PDU* surfaceToSurface)
 {
 	UINT16 index;
 	BOOL sameSurface;
 	int nWidth, nHeight;
-	RDPGFX_RECT16* rectSrc;
+	RECTANGLE_16* rectSrc;
 	RDPGFX_POINT16* destPt;
 	RECTANGLE_16 invalidRect;
 	xfGfxSurface* surfaceSrc;
@@ -682,7 +980,7 @@ int xf_SurfaceToSurface(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_SURFACE_
 		surfaceDst = surfaceSrc;
 
 	if (!surfaceSrc || !surfaceDst)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
 	nWidth = rectSrc->right - rectSrc->left;
 	nHeight = rectSrc->bottom - rectSrc->top;
@@ -708,19 +1006,24 @@ int xf_SurfaceToSurface(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_SURFACE_
 		invalidRect.right = destPt->x + rectSrc->right;
 		invalidRect.bottom = destPt->y + rectSrc->bottom;
 
-		region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+		region16_union_rect(&surfaceDst->invalidRegion, &surfaceDst->invalidRegion, &invalidRect);
 	}
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_SurfaceToCache(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_CACHE_PDU* surfaceToCache)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_SurfaceToCache(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_CACHE_PDU* surfaceToCache)
 {
 	size_t size;
-	RDPGFX_RECT16* rect;
+	RECTANGLE_16* rect;
 	xfGfxSurface* surface;
 	xfGfxCacheEntry* cacheEntry;
 	xfContext* xfc = (xfContext*) context->custom;
@@ -730,12 +1033,12 @@ int xf_SurfaceToCache(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_CACHE_PDU*
 	surface = (xfGfxSurface*) context->GetSurfaceData(context, surfaceToCache->surfaceId);
 
 	if (!surface)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
 	cacheEntry = (xfGfxCacheEntry*) calloc(1, sizeof(xfGfxCacheEntry));
 
 	if (!cacheEntry)
-		return -1;
+		return CHANNEL_RC_NO_MEMORY;
 
 	cacheEntry->width = (UINT32) (rect->right - rect->left);
 	cacheEntry->height = (UINT32) (rect->bottom - rect->top);
@@ -749,7 +1052,10 @@ int xf_SurfaceToCache(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_CACHE_PDU*
 	cacheEntry->data = (BYTE*) _aligned_malloc(size, 16);
 
 	if (!cacheEntry->data)
-		return -1;
+	{
+		free(cacheEntry);
+		return CHANNEL_RC_NO_MEMORY;
+	}
 
 	ZeroMemory(cacheEntry->data, size);
 
@@ -759,10 +1065,15 @@ int xf_SurfaceToCache(RdpgfxClientContext* context, RDPGFX_SURFACE_TO_CACHE_PDU*
 
 	context->SetCacheSlotData(context, surfaceToCache->cacheSlot, (void*) cacheEntry);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_CacheToSurface(RdpgfxClientContext* context, RDPGFX_CACHE_TO_SURFACE_PDU* cacheToSurface)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_CacheToSurface(RdpgfxClientContext* context, RDPGFX_CACHE_TO_SURFACE_PDU* cacheToSurface)
 {
 	UINT16 index;
 	RDPGFX_POINT16* destPt;
@@ -775,7 +1086,7 @@ int xf_CacheToSurface(RdpgfxClientContext* context, RDPGFX_CACHE_TO_SURFACE_PDU*
 	cacheEntry = (xfGfxCacheEntry*) context->GetCacheSlotData(context, cacheToSurface->cacheSlot);
 
 	if (!surface || !cacheEntry)
-		return -1;
+		return ERROR_INTERNAL_ERROR;
 
 	for (index = 0; index < cacheToSurface->destPtsCount; index++)
 	{
@@ -790,21 +1101,31 @@ int xf_CacheToSurface(RdpgfxClientContext* context, RDPGFX_CACHE_TO_SURFACE_PDU*
 		invalidRect.right = destPt->x + cacheEntry->width - 1;
 		invalidRect.bottom = destPt->y + cacheEntry->height - 1;
 
-		region16_union_rect(&(xfc->invalidRegion), &(xfc->invalidRegion), &invalidRect);
+		region16_union_rect(&surface->invalidRegion, &surface->invalidRegion, &invalidRect);
 	}
 
 	if (!xfc->inGfxFrame)
-		xf_OutputUpdate(xfc);
+		xf_UpdateSurfaces(xfc);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_CacheImportReply(RdpgfxClientContext* context, RDPGFX_CACHE_IMPORT_REPLY_PDU* cacheImportReply)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_CacheImportReply(RdpgfxClientContext* context, RDPGFX_CACHE_IMPORT_REPLY_PDU* cacheImportReply)
 {
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_EvictCacheEntry(RdpgfxClientContext* context, RDPGFX_EVICT_CACHE_ENTRY_PDU* evictCacheEntry)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_EvictCacheEntry(RdpgfxClientContext* context, RDPGFX_EVICT_CACHE_ENTRY_PDU* evictCacheEntry)
 {
 	xfGfxCacheEntry* cacheEntry;
 
@@ -818,21 +1139,40 @@ int xf_EvictCacheEntry(RdpgfxClientContext* context, RDPGFX_EVICT_CACHE_ENTRY_PD
 
 	context->SetCacheSlotData(context, evictCacheEntry->cacheSlot, NULL);
 
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
-int xf_MapSurfaceToOutput(RdpgfxClientContext* context, RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU* surfaceToOutput)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_MapSurfaceToOutput(RdpgfxClientContext* context, RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU* surfaceToOutput)
 {
-	xfContext* xfc = (xfContext*) context->custom;
+	xfGfxSurface* surface;
 
-	xfc->outputSurfaceId = surfaceToOutput->surfaceId;
+	surface = (xfGfxSurface*) context->GetSurfaceData(context, surfaceToOutput->surfaceId);
 
-	return 1;
+	if (!surface)
+		return ERROR_INTERNAL_ERROR;
+
+	surface->outputMapped = TRUE;
+	surface->outputOriginX = surfaceToOutput->outputOriginX;
+	surface->outputOriginY = surfaceToOutput->outputOriginY;
+
+	region16_clear(&surface->invalidRegion);
+
+	return CHANNEL_RC_OK;
 }
 
-int xf_MapSurfaceToWindow(RdpgfxClientContext* context, RDPGFX_MAP_SURFACE_TO_WINDOW_PDU* surfaceToWindow)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT xf_MapSurfaceToWindow(RdpgfxClientContext* context, RDPGFX_MAP_SURFACE_TO_WINDOW_PDU* surfaceToWindow)
 {
-	return 1;
+	return CHANNEL_RC_OK;
 }
 
 void xf_graphics_pipeline_init(xfContext* xfc, RdpgfxClientContext* gfx)
@@ -855,14 +1195,9 @@ void xf_graphics_pipeline_init(xfContext* xfc, RdpgfxClientContext* gfx)
 	gfx->EvictCacheEntry = xf_EvictCacheEntry;
 	gfx->MapSurfaceToOutput = xf_MapSurfaceToOutput;
 	gfx->MapSurfaceToWindow = xf_MapSurfaceToWindow;
-
-	region16_init(&(xfc->invalidRegion));
 }
 
 void xf_graphics_pipeline_uninit(xfContext* xfc, RdpgfxClientContext* gfx)
 {
-	region16_uninit(&(xfc->invalidRegion));
 
-	gfx->custom = NULL;
-	xfc->gfx = NULL;
 }

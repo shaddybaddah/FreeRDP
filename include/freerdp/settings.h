@@ -4,6 +4,7 @@
  *
  * Copyright 2009-2011 Jay Sorg
  * Copyright 2010-2012 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2016 Armin Novak <armin.novak@gmail.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +21,8 @@
 
 #ifndef FREERDP_SETTINGS_H
 #define FREERDP_SETTINGS_H
+
+#include <winpr/timezone.h>
 
 #include <freerdp/api.h>
 #include <freerdp/types.h>
@@ -263,31 +266,11 @@ typedef struct _TARGET_NET_ADDRESS TARGET_NET_ADDRESS;
 #define PACKET_COMPR_TYPE_RDP61			0x03
 #define PACKET_COMPR_TYPE_RDP8			0x04
 
-/* SYSTEM_TIME */
-typedef struct
-{
-	UINT16 wYear;
-	UINT16 wMonth;
-	UINT16 wDayOfWeek;
-	UINT16 wDay;
-	UINT16 wHour;
-	UINT16 wMinute;
-	UINT16 wSecond;
-	UINT16 wMilliseconds;
-} SYSTEM_TIME;
-
-/* TIME_ZONE_INFORMATION */
-struct _TIME_ZONE_INFO
-{
-	UINT32 bias;
-	char standardName[32];
-	SYSTEM_TIME standardDate;
-	UINT32 standardBias;
-	char daylightName[32];
-	SYSTEM_TIME daylightDate;
-	UINT32 daylightBias;
-};
-typedef struct _TIME_ZONE_INFO TIME_ZONE_INFO;
+/* Desktop Rotation Flags */
+#define ORIENTATION_LANDSCAPE			0
+#define ORIENTATION_PORTRAIT			90
+#define ORIENTATION_LANDSCAPE_FLIPPED	180
+#define ORIENTATION_PORTRAIT_FLIPPED	270
 
 /* ARC_CS_PRIVATE_PACKET */
 typedef struct
@@ -392,16 +375,6 @@ typedef struct _GLYPH_CACHE_DEFINITION GLYPH_CACHE_DEFINITION;
 
 /* Monitors */
 
-struct rdp_monitor
-{
-	INT32 x;
-	INT32 y;
-	INT32 width;
-	INT32 height;
-	UINT32 is_primary;
-};
-typedef struct rdp_monitor rdpMonitor;
-
 struct _MONITOR_DEF
 {
 	INT32 left;
@@ -421,6 +394,18 @@ struct _MONITOR_ATTRIBUTES
 	UINT32 deviceScaleFactor;
 };
 typedef struct _MONITOR_ATTRIBUTES MONITOR_ATTRIBUTES;
+
+struct rdp_monitor
+{
+	INT32 x;
+	INT32 y;
+	INT32 width;
+	INT32 height;
+	UINT32 is_primary;
+	UINT32 orig_screen;
+	MONITOR_ATTRIBUTES attributes;
+};
+typedef struct rdp_monitor rdpMonitor;
 
 /* Device Redirection */
 
@@ -529,7 +514,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_SupportGraphicsPipeline				142
 #define FreeRDP_SupportDynamicTimeZone				143
 #define FreeRDP_SupportHeartbeatPdu				144
-#define FreeRDP_DisableEncryption				192
+#define FreeRDP_UseRdpSecurityLayer				192
 #define FreeRDP_EncryptionMethods				193
 #define FreeRDP_ExtEncryptionMethods				194
 #define FreeRDP_EncryptionLevel					195
@@ -599,6 +584,9 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_RemoteAssistancePassStub			1026
 #define FreeRDP_RemoteAssistancePassword			1027
 #define FreeRDP_RemoteAssistanceRCTicket			1028
+#define FreeRDP_EncomspVirtualChannel				1029
+#define FreeRDP_RemdeskVirtualChannel				1030
+#define FreeRDP_LyncRdpMode					1031
 #define FreeRDP_TlsSecurity					1088
 #define FreeRDP_NlaSecurity					1089
 #define FreeRDP_RdpSecurity					1090
@@ -612,6 +600,8 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_AuthenticationServiceClass 			1098
 #define FreeRDP_DisableCredentialsDelegation 			1099
 #define FreeRDP_AuthenticationLevel				1100
+#define FreeRDP_AllowedTlsCiphers				1101
+#define FreeRDP_VmConnectMode					1102
 #define FreeRDP_MstscCookieMode					1152
 #define FreeRDP_CookieMaxLength					1153
 #define FreeRDP_PreconnectionId					1154
@@ -643,6 +633,11 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_RdpServerRsaKey					1413
 #define FreeRDP_RdpServerCertificate				1414
 #define FreeRDP_ExternalCertificateManagement			1415
+#define FreeRDP_CertificateContent 1416
+#define FreeRDP_PrivateKeyContent	1417
+#define FreeRDP_RdpKeyContent		1418
+#define FreeRDP_AutoAcceptCertificate		1419
+
 #define FreeRDP_Workarea					1536
 #define FreeRDP_Fullscreen					1537
 #define FreeRDP_PercentScreen					1538
@@ -661,7 +656,8 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_SmartSizing					1551
 #define FreeRDP_XPan						1552
 #define FreeRDP_YPan						1553
-#define FreeRDP_ScalingFactor					1554
+#define FreeRDP_SmartSizingWidth				1554
+#define FreeRDP_SmartSizingHeight				1555
 #define FreeRDP_SoftwareGdi					1601
 #define FreeRDP_LocalConnection					1602
 #define FreeRDP_AuthenticationOnly				1603
@@ -686,6 +682,9 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_GatewayUseSameCredentials			1991
 #define FreeRDP_GatewayEnabled					1992
 #define FreeRDP_GatewayBypassLocal				1993
+#define FreeRDP_GatewayRpcTransport				1994
+#define FreeRDP_GatewayHttpTransport				1995
+#define FreeRDP_GatewayUdpTransport				1996
 #define FreeRDP_RemoteApplicationMode				2112
 #define FreeRDP_RemoteApplicationName				2113
 #define FreeRDP_RemoteApplicationIcon				2114
@@ -771,6 +770,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_GfxProgressive					3842
 #define FreeRDP_GfxProgressiveV2				3843
 #define FreeRDP_GfxH264						3844
+#define FreeRDP_GfxAVC444					3845
 #define FreeRDP_BitmapCacheV3CodecId				3904
 #define FreeRDP_DrawNineGridEnabled				3968
 #define FreeRDP_DrawNineGridCacheSize				3969
@@ -854,10 +854,15 @@ struct rdp_settings
 	ALIGN64 BOOL SupportGraphicsPipeline; /* 142 */
 	ALIGN64 BOOL SupportDynamicTimeZone; /* 143 */
 	ALIGN64 BOOL SupportHeartbeatPdu; /* 144 */
-	UINT64 padding0192[192 - 145]; /* 145 */
+	ALIGN64 UINT32 DesktopPhysicalWidth; /* 145 */
+	ALIGN64 UINT32 DesktopPhysicalHeight; /* 146 */
+	ALIGN64 UINT16 DesktopOrientation; /* 147 */
+	ALIGN64 UINT32 DesktopScaleFactor; /* 148 */
+	ALIGN64 UINT32 DeviceScaleFactor; /* 149 */
+	UINT64 padding0192[192 - 150]; /* 150 */
 
 	/* Client/Server Security Data */
-	ALIGN64 BOOL DisableEncryption; /* 192 */
+	ALIGN64 BOOL UseRdpSecurityLayer; /* 192 */
 	ALIGN64 UINT32 EncryptionMethods; /* 193 */
 	ALIGN64 UINT32 ExtEncryptionMethods; /* 194 */
 	ALIGN64 UINT32 EncryptionLevel; /* 195 */
@@ -893,7 +898,11 @@ struct rdp_settings
 	ALIGN64 BOOL ListMonitors; /* 392 */
 	ALIGN64 UINT32* MonitorIds; /* 393 */
 	ALIGN64 UINT32 NumMonitorIds; /* 394 */
-	UINT64 padding0448[448 - 395]; /* 395 */
+	ALIGN64 UINT32 MonitorLocalShiftX; /*395 */
+	ALIGN64 UINT32 MonitorLocalShiftY; /* 396 */
+	ALIGN64 BOOL HasMonitorAttributes; /* 397 */
+	UINT64 padding0448[448 - 398]; /* 398 */
+
 
 	/* Client Message Channel Data */
 	UINT64 padding0512[512 - 448]; /* 448 */
@@ -949,7 +958,7 @@ struct rdp_settings
 	UINT64 padding0896[896 - 837]; /* 837 */
 
 	/* Client Info (Time Zone) */
-	ALIGN64 TIME_ZONE_INFO* ClientTimeZone; /* 896 */
+	ALIGN64 LPTIME_ZONE_INFORMATION ClientTimeZone; /* 896 */
 	ALIGN64 char* DynamicDSTTimeZoneKeyName; /* 897 */
 	ALIGN64 BOOL DynamicDaylightTimeDisabled; /* 898 */
 	UINT64 padding0960[960 - 899]; /* 899 */
@@ -972,7 +981,10 @@ struct rdp_settings
 	ALIGN64 char* RemoteAssistancePassStub; /* 1026 */
 	ALIGN64 char* RemoteAssistancePassword; /* 1027 */
 	ALIGN64 char* RemoteAssistanceRCTicket; /* 1028 */
-	UINT64 padding1088[1088 - 1029]; /* 1029 */
+	ALIGN64 BOOL EncomspVirtualChannel; /* 1029 */
+	ALIGN64 BOOL RemdeskVirtualChannel; /* 1030 */
+	ALIGN64 BOOL LyncRdpMode; /* 1031 */
+	UINT64 padding1088[1088 - 1032]; /* 1032 */
 
 	/**
 	 * X.224 Connection Request/Confirm
@@ -992,8 +1004,9 @@ struct rdp_settings
 	ALIGN64 char* AuthenticationServiceClass; /* 1098 */
 	ALIGN64 BOOL DisableCredentialsDelegation; /* 1099 */
 	ALIGN64 BOOL AuthenticationLevel; /* 1100 */
-	ALIGN64 char* PermittedTLSCiphers; /* 1101 */
-	UINT64 padding1152[1152 - 1102]; /* 1102 */
+	ALIGN64 char* AllowedTlsCiphers; /* 1101 */
+	ALIGN64 BOOL VmConnectMode; /* 1102 */
+	UINT64 padding1152[1152 - 1103]; /* 1103 */
 
 	/* Connection Cookie */
 	ALIGN64 BOOL MstscCookieMode; /* 1152 */
@@ -1018,7 +1031,8 @@ struct rdp_settings
 	ALIGN64 UINT32 RedirectionTsvUrlLength; /* 1227 */
 	ALIGN64 UINT32 TargetNetAddressCount; /* 1228 */
 	ALIGN64 char** TargetNetAddresses; /* 1229 */
-	UINT64 padding1280[1280 - 1230]; /* 1230 */
+	ALIGN64 UINT32* TargetNetPorts; /* 1230 */
+	UINT64 padding1280[1280 - 1231]; /* 1231 */
 
 	/**
 	 * Security
@@ -1043,7 +1057,11 @@ struct rdp_settings
 	ALIGN64 rdpRsaKey* RdpServerRsaKey; /* 1413 */
 	ALIGN64 rdpCertificate* RdpServerCertificate; /* 1414 */
 	ALIGN64 BOOL ExternalCertificateManagement; /* 1415 */
-	UINT64 padding1472[1472 - 1416]; /* 1416 */
+	ALIGN64 char *CertificateContent; /* 1416 */
+	ALIGN64 char *PrivateKeyContent; /* 1417 */
+	ALIGN64 char* RdpKeyContent; /* 1418 */
+	ALIGN64 BOOL AutoAcceptCertificate; /* 1419 */
+	UINT64 padding1472[1472 - 1420]; /* 1420 */
 	UINT64 padding1536[1536 - 1472]; /* 1472 */
 
 	/**
@@ -1069,15 +1087,17 @@ struct rdp_settings
 	ALIGN64 BOOL SmartSizing; /* 1551 */
 	ALIGN64 int XPan; /* 1552 */
 	ALIGN64 int YPan; /* 1553 */
-	ALIGN64 double ScalingFactor; /* 1554 */
-	UINT64 padding1601[1601 - 1555]; /* 1555 */
+	ALIGN64 UINT32 SmartSizingWidth; /* 1554 */
+	ALIGN64 UINT32 SmartSizingHeight; /* 1555 */
+	UINT64 padding1601[1601 - 1556]; /* 1556 */
 
 	/* Miscellaneous */
 	ALIGN64 BOOL SoftwareGdi; /* 1601 */
 	ALIGN64 BOOL LocalConnection; /* 1602 */
 	ALIGN64 BOOL AuthenticationOnly; /* 1603 */
 	ALIGN64 BOOL CredentialsFromStdin; /* 1604 */
-	UINT64 padding1664[1664 - 1605]; /* 1605 */
+	ALIGN64 BOOL UnmapButtons; /* 1605 */
+	UINT64 padding1664[1664 - 1606]; /* 1606 */
 
 	/* Names */
 	ALIGN64 char* ComputerName; /* 1664 */
@@ -1117,7 +1137,10 @@ struct rdp_settings
 	ALIGN64 BOOL GatewayUseSameCredentials; /* 1991 */
 	ALIGN64 BOOL GatewayEnabled; /* 1992 */
 	ALIGN64 BOOL GatewayBypassLocal; /* 1993 */
-	UINT64 padding2048[2048 - 1994]; /* 1994 */
+	ALIGN64 BOOL GatewayRpcTransport; /* 1994 */
+	ALIGN64 BOOL GatewayHttpTransport; /* 1995 */
+	ALIGN64 BOOL GatewayUdpTransport; /* 1996 */
+	UINT64 padding2048[2048 - 1997]; /* 1997 */
 	UINT64 padding2112[2112 - 2048]; /* 2048 */
 
 	/**
@@ -1200,7 +1223,8 @@ struct rdp_settings
 	ALIGN64 BOOL MultiTouchInput; /* 2631 */
 	ALIGN64 BOOL MultiTouchGestures; /* 2632 */
 	ALIGN64 UINT32 KeyboardHook; /* 2633 */
-	UINT64 padding2688[2688 - 2634]; /* 2634 */
+	ALIGN64 BOOL HasHorizontalWheel; /* 2634 */
+	UINT64 padding2688[2688 - 2635]; /* 2635 */
 
 	/* Brush Capabilities */
 	ALIGN64 UINT32 BrushSupportLevel; /* 2688 */
@@ -1296,7 +1320,8 @@ struct rdp_settings
 	ALIGN64 BOOL GfxProgressive; /* 3842 */
 	ALIGN64 BOOL GfxProgressiveV2; /* 3843 */
 	ALIGN64 BOOL GfxH264; /* 3844 */
-	UINT64 padding3904[3904 - 3845]; /* 3845 */
+	ALIGN64 BOOL GfxAVC444; /* 3845 */
+	UINT64 padding3904[3904 - 3846]; /* 3846 */
 
 	/**
 	 * Caches
@@ -1417,17 +1442,18 @@ FREERDP_API int freerdp_addin_replace_argument(ADDIN_ARGV* args, char* previous,
 FREERDP_API int freerdp_addin_set_argument_value(ADDIN_ARGV* args, char* option, char* value);
 FREERDP_API int freerdp_addin_replace_argument_value(ADDIN_ARGV* args, char* previous, char* option, char* value);
 
-FREERDP_API void freerdp_device_collection_add(rdpSettings* settings, RDPDR_DEVICE* device);
+FREERDP_API BOOL freerdp_device_collection_add(rdpSettings* settings, RDPDR_DEVICE* device);
 FREERDP_API RDPDR_DEVICE* freerdp_device_collection_find(rdpSettings* settings, const char* name);
+FREERDP_API RDPDR_DEVICE* freerdp_device_collection_find_type(rdpSettings* settings, UINT32 type);
 FREERDP_API RDPDR_DEVICE* freerdp_device_clone(RDPDR_DEVICE* device);
 FREERDP_API void freerdp_device_collection_free(rdpSettings* settings);
 
-FREERDP_API void freerdp_static_channel_collection_add(rdpSettings* settings, ADDIN_ARGV* channel);
+FREERDP_API BOOL freerdp_static_channel_collection_add(rdpSettings* settings, ADDIN_ARGV* channel);
 FREERDP_API ADDIN_ARGV* freerdp_static_channel_collection_find(rdpSettings* settings, const char* name);
 FREERDP_API ADDIN_ARGV* freerdp_static_channel_clone(ADDIN_ARGV* channel);
 FREERDP_API void freerdp_static_channel_collection_free(rdpSettings* settings);
 
-FREERDP_API void freerdp_dynamic_channel_collection_add(rdpSettings* settings, ADDIN_ARGV* channel);
+FREERDP_API BOOL freerdp_dynamic_channel_collection_add(rdpSettings* settings, ADDIN_ARGV* channel);
 FREERDP_API ADDIN_ARGV* freerdp_dynamic_channel_collection_find(rdpSettings* settings, const char* name);
 FREERDP_API ADDIN_ARGV* freerdp_dynamic_channel_clone(ADDIN_ARGV* channel);
 FREERDP_API void freerdp_dynamic_channel_collection_free(rdpSettings* settings);
@@ -1454,9 +1480,6 @@ FREERDP_API int freerdp_set_param_uint64(rdpSettings* settings, int id, UINT64 p
 
 FREERDP_API char* freerdp_get_param_string(rdpSettings* settings, int id);
 FREERDP_API int freerdp_set_param_string(rdpSettings* settings, int id, const char* param);
-
-FREERDP_API double freerdp_get_param_double(rdpSettings* settings, int id);
-FREERDP_API int freerdp_set_param_double(rdpSettings* settings, int id, double param);
 
 #ifdef __cplusplus
 }

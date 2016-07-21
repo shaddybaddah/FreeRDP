@@ -51,68 +51,88 @@ BOOL ios_ui_authenticate(freerdp * instance, char** username, char** password, c
 	*username = strdup([[params objectForKey:@"username"] UTF8String]);
 	*password = strdup([[params objectForKey:@"password"] UTF8String]);
 	*domain = strdup([[params objectForKey:@"domain"] UTF8String]);
-	
-	return TRUE;
-}
 
-BOOL ios_ui_check_certificate(freerdp * instance, char * subject, char * issuer, char * fingerprint)
-{
-    // check whether we accept all certificates
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"security.accept_certificates"] == YES)
-        return TRUE;
-    
-	mfInfo* mfi = MFI_FROM_INSTANCE(instance);
-	NSMutableDictionary* params = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-                                        (subject) ? [NSString stringWithUTF8String:subject] : @"", @"subject",
-                                        (issuer) ? [NSString stringWithUTF8String:issuer] : @"", @"issuer",
-                                        (fingerprint) ? [NSString stringWithUTF8String:subject] : @"", @"fingerprint",
-                                        nil];
-	
-    // request certificate verification UI
-    [mfi->session performSelectorOnMainThread:@selector(sessionVerifyCertificateWithParams:) withObject:params waitUntilDone:YES];
-    
-    // wait for UI request to be completed
-    [[mfi->session uiRequestCompleted] lock];
-    [[mfi->session uiRequestCompleted] wait];
-    [[mfi->session uiRequestCompleted] unlock];
-    
-	if (![[params valueForKey:@"result"] boolValue])
+	if (!(*username) || !(*password) || !(*domain))
 	{
-		mfi->unwanted = YES;
+		free(*username);
+		free(*password);
+		free(*domain);
 		return FALSE;
 	}
 	
 	return TRUE;
 }
 
-BOOL ios_ui_check_changed_certificate(freerdp * instance, char * subject, char * issuer, char * new_fingerprint, char * old_fingerprint)
+DWORD ios_ui_check_certificate(freerdp * instance, const char* common_name,
+				   const char * subject, const char * issuer,
+				   const char * fingerprint, BOOL host_mismatch)
 {
-	return ios_ui_check_certificate(instance, subject, issuer, new_fingerprint);    
+	// check whether we accept all certificates
+	if ([[NSUserDefaults standardUserDefaults] boolForKey:@"security.accept_certificates"] == YES)
+		return 2;
+
+	mfInfo* mfi = MFI_FROM_INSTANCE(instance);
+	NSMutableDictionary* params = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+										(subject) ? [NSString stringWithUTF8String:subject] : @"", @"subject",
+										(issuer) ? [NSString stringWithUTF8String:issuer] : @"", @"issuer",
+										(fingerprint) ? [NSString stringWithUTF8String:subject] : @"", @"fingerprint",
+										nil];
+
+	// request certificate verification UI
+	[mfi->session performSelectorOnMainThread:@selector(sessionVerifyCertificateWithParams:) withObject:params waitUntilDone:YES];
+
+	// wait for UI request to be completed
+	[[mfi->session uiRequestCompleted] lock];
+	[[mfi->session uiRequestCompleted] wait];
+	[[mfi->session uiRequestCompleted] unlock];
+
+	if (![[params valueForKey:@"result"] boolValue])
+	{
+		mfi->unwanted = YES;
+		return 0;
+	}
+
+	return 1;
+}
+
+DWORD ios_ui_check_changed_certificate(freerdp * instance,
+									   const char * common_name,
+									   const char * subject,
+									   const char * issuer,
+									   const char * new_fingerprint,
+									   const char * old_fingerprint)
+{
+	return ios_ui_check_certificate(instance, common_name, subject, issuer,
+					new_fingerprint, FALSE);
 }
 
 
 #pragma mark -
 #pragma mark Graphics updates
 
-void ios_ui_begin_paint(rdpContext * context)
+BOOL ios_ui_begin_paint(rdpContext * context)
 {
 	rdpGdi *gdi = context->gdi;
 	gdi->primary->hdc->hwnd->invalid->null = 1;
+    return TRUE;
 }
 
-void ios_ui_end_paint(rdpContext * context)
+BOOL ios_ui_end_paint(rdpContext * context)
 {
     mfInfo* mfi = MFI_FROM_INSTANCE(context->instance);
 	rdpGdi *gdi = context->gdi;
 	CGRect dirty_rect = CGRectMake(gdi->primary->hdc->hwnd->invalid->x, gdi->primary->hdc->hwnd->invalid->y, gdi->primary->hdc->hwnd->invalid->w, gdi->primary->hdc->hwnd->invalid->h);
 	
-	[mfi->session performSelectorOnMainThread:@selector(setNeedsDisplayInRectAsValue:) withObject:[NSValue valueWithCGRect:dirty_rect] waitUntilDone:NO];
+	if (gdi->primary->hdc->hwnd->invalid->null == 0)
+		[mfi->session performSelectorOnMainThread:@selector(setNeedsDisplayInRectAsValue:) withObject:[NSValue valueWithCGRect:dirty_rect] waitUntilDone:NO];
+    return TRUE;
 }
 
 
-void ios_ui_resize_window(rdpContext * context)
+BOOL ios_ui_resize_window(rdpContext * context)
 {
 	ios_resize_display_buffer(MFI_FROM_INSTANCE(context->instance));
+    return TRUE;
 }
 
 
@@ -125,7 +145,7 @@ static void ios_create_bitmap_context(mfInfo* mfi)
 	    
     rdpGdi* gdi = mfi->instance->context->gdi;
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-	if(gdi->dstBpp == 16)
+	if (gdi->bytesPerPixel == 2)
 		mfi->bitmap_context = CGBitmapContextCreate(gdi->primary_buffer, gdi->width, gdi->height, 5, gdi->width * 2, colorSpace, kCGBitmapByteOrder16Little | kCGImageAlphaNoneSkipFirst);
 	else
 		mfi->bitmap_context = CGBitmapContextCreate(gdi->primary_buffer, gdi->width, gdi->height, 8, gdi->width * 4, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);

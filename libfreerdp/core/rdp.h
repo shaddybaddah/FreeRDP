@@ -3,6 +3,7 @@
  * RDP Core
  *
  * Copyright 2011 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2014 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +25,7 @@
 #include "config.h"
 #endif
 
+#include "nla.h"
 #include "mcs.h"
 #include "tpkt.h"
 #include "bulk.h"
@@ -49,6 +51,7 @@
 #include <freerdp/log.h>
 
 #include <winpr/stream.h>
+#include <winpr/crypto.h>
 
 /* Security Header Flags */
 #define SEC_EXCHANGE_PKT					0x0001
@@ -131,6 +134,7 @@ struct rdp_rdp
 	int state;
 	freerdp* instance;
 	rdpContext* context;
+	rdpNla* nla;
 	rdpMcs* mcs;
 	rdpNego* nego;
 	rdpBulk* bulk;
@@ -144,15 +148,15 @@ struct rdp_rdp
 	rdpAutoDetect* autodetect;
 	rdpHeartbeat* heartbeat;
 	rdpMultitransport* multitransport;
-	struct crypto_rc4_struct* rc4_decrypt_key;
+	WINPR_RC4_CTX* rc4_decrypt_key;
 	int decrypt_use_count;
 	int decrypt_checksum_use_count;
-	struct crypto_rc4_struct* rc4_encrypt_key;
+	WINPR_RC4_CTX* rc4_encrypt_key;
 	int encrypt_use_count;
 	int encrypt_checksum_use_count;
-	struct crypto_des3_struct* fips_encrypt;
-	struct crypto_des3_struct* fips_decrypt;
-	struct crypto_hmac_struct* fips_hmac;
+	WINPR_CIPHER_CTX* fips_encrypt;
+	WINPR_CIPHER_CTX* fips_decrypt;
+	WINPR_HMAC_CTX* fips_hmac;
 	UINT32 sec_flags;
 	BOOL do_crypt;
 	BOOL do_crypt_license;
@@ -168,7 +172,6 @@ struct rdp_rdp
 	BYTE fips_decrypt_key[24];
 	UINT32 errorInfo;
 	UINT32 finalize_sc_pdus;
-	BOOL disconnect;
 	BOOL resendFocus;
 	BOOL deactivation_reactivation;
 	BOOL AwaitCapabilities;
@@ -206,13 +209,16 @@ int rdp_send_channel_data(rdpRdp* rdp, UINT16 channelId, BYTE* data, int size);
 
 wStream* rdp_message_channel_pdu_init(rdpRdp* rdp);
 BOOL rdp_send_message_channel_pdu(rdpRdp* rdp, wStream* s, UINT16 sec_flags);
-int rdp_recv_message_channel_pdu(rdpRdp* rdp, wStream* s);
+int rdp_recv_message_channel_pdu(rdpRdp* rdp, wStream* s, UINT16 securityFlags);
 
 int rdp_recv_out_of_sequence_pdu(rdpRdp* rdp, wStream* s);
 
 void rdp_read_flow_control_pdu(wStream* s, UINT16* type);
 
-void rdp_set_blocking_mode(rdpRdp* rdp, BOOL blocking);
+BOOL rdp_write_monitor_layout_pdu(wStream* s, UINT32 monitorCount, const rdpMonitor* monitorDefArray);
+
+int rdp_recv_callback(rdpTransport* transport, wStream* s, void* extra);
+
 int rdp_check_fds(rdpRdp* rdp);
 
 rdpRdp* rdp_new(rdpContext* context);
@@ -229,5 +235,6 @@ void rdp_free(rdpRdp* rdp);
 BOOL rdp_decrypt(rdpRdp* rdp, wStream* s, int length, UINT16 securityFlags);
 
 BOOL rdp_set_error_info(rdpRdp* rdp, UINT32 errorInfo);
+BOOL rdp_send_error_info(rdpRdp* rdp);
 
 #endif /* __RDP_H */

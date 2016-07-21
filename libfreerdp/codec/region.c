@@ -94,17 +94,17 @@ const RECTANGLE_16 *region16_rects(const REGION16 *region, int *nbRects)
 	REGION16_DATA *data;
 
 	assert(region);
-	assert(region->data);
 
 	data = region->data;
 	if (!data)
 	{
 		if (nbRects)
 			*nbRects = 0;
-		return 0;
+		return NULL;
 	}
 
-	*nbRects = data->nbRects;
+	if (nbRects)
+		*nbRects = data->nbRects;
 	return (RECTANGLE_16 *)(data + 1);
 }
 
@@ -132,7 +132,10 @@ static RECTANGLE_16 *region16_extents_noconst(REGION16 *region)
 
 BOOL rectangle_is_empty(const RECTANGLE_16 *rect)
 {
-	return (rect->left + rect->top + rect->right + rect->bottom) ? TRUE : FALSE;
+	/* A rectangle with width = 0 or height = 0 should be regarded
+	 * as empty.
+	 */
+	return ((rect->left == rect->right) || (rect->top == rect->bottom)) ? TRUE : FALSE;
 }
 
 BOOL region16_is_empty(const REGION16 *region)
@@ -240,7 +243,7 @@ void region16_print(const REGION16 *region)
 		if (rects->top != currentBandY)
 		{
 			currentBandY = rects->top;
-			WLog_DBG(TAG,  "\nband %d: ", currentBandY);
+			WLog_DBG(TAG,  "band %d: ", currentBandY);
 		}
 
 		WLog_DBG(TAG,  "(%d,%d-%d,%d)", rects->left, rects->top, rects->right, rects->bottom);
@@ -526,7 +529,7 @@ BOOL region16_union_rect(REGION16 *dst, const REGION16 *src, const RECTANGLE_16 
 		dstRect->top = rect->top;
 		dstRect->left = rect->left;
 		dstRect->right = rect->right;
-		dstRect->bottom = srcExtents->top;
+		dstRect->bottom = MIN(srcExtents->top, rect->bottom);
 
 		usedRects++;
 		dstRect++;
@@ -770,10 +773,21 @@ BOOL region16_intersect_rect(REGION16 *dst, const REGION16 *src, const RECTANGLE
 			usedRects++;
 			dstPtr++;
 
-			newExtents.top = MIN(common.top, newExtents.top);
-			newExtents.left = MIN(common.left, newExtents.left);
-			newExtents.bottom = MAX(common.bottom, newExtents.bottom);
-			newExtents.right = MAX(common.right, newExtents.right);
+			if (rectangle_is_empty(&newExtents))
+			{
+				/* Check if the existing newExtents is empty. If it is empty, use 
+				 * new common directly. We do not need to check common rectangle 
+				 * because the rectangles_intersection() ensures that it is not empty.
+				 */
+				newExtents = common;
+			}
+			else
+			{
+				newExtents.top = MIN(common.top, newExtents.top);
+				newExtents.left = MIN(common.left, newExtents.left);
+				newExtents.bottom = MAX(common.bottom, newExtents.bottom);
+				newExtents.right = MAX(common.right, newExtents.right);
+			}
 		}
 	}
 
@@ -798,10 +812,12 @@ BOOL region16_intersect_rect(REGION16 *dst, const REGION16 *src, const RECTANGLE
 void region16_uninit(REGION16 *region)
 {
 	assert(region);
-	assert(region->data);
 
-	if (region->data->size)
-		free(region->data);
+	if (region->data)
+	{
+		if (region->data->size)
+			free(region->data);
 
-	region->data = NULL;
+		region->data = NULL;
+	}
 }

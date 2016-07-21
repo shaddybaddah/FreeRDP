@@ -3,6 +3,8 @@
  * T.125 Multipoint Communication Service (MCS) Protocol
  *
  * Copyright 2011 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2015 Thincast Technologies GmbH
+ * Copyright 2015 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -164,8 +166,8 @@ struct rdp_mcs
 BOOL mcs_merge_domain_parameters(DomainParameters* targetParameters, DomainParameters* minimumParameters,
 		DomainParameters* maximumParameters, DomainParameters* pOutParameters);
 
-void mcs_write_connect_initial(wStream* s, rdpMcs* mcs, wStream* userData);
-void mcs_write_connect_response(wStream* s, rdpMcs* mcs, wStream* userData);
+BOOL mcs_write_connect_initial(wStream* s, rdpMcs* mcs, wStream* userData);
+BOOL mcs_write_connect_response(wStream* s, rdpMcs* mcs, wStream* userData);
 
 BOOL mcs_recv_connect_initial(rdpMcs* mcs, wStream* s);
 BOOL mcs_send_connect_initial(rdpMcs* mcs);
@@ -185,6 +187,8 @@ BOOL mcs_recv_disconnect_provider_ultimatum(rdpMcs* mcs, wStream* s, int* reason
 BOOL mcs_send_disconnect_provider_ultimatum(rdpMcs* mcs);
 BOOL mcs_read_domain_mcspdu_header(wStream* s, enum DomainMCSPDU* domainMCSPDU, UINT16* length);
 void mcs_write_domain_mcspdu_header(wStream* s, enum DomainMCSPDU domainMCSPDU, UINT16 length, BYTE options);
+
+BOOL mcs_client_begin(rdpMcs* mcs);
 
 rdpMcs* mcs_new(rdpTransport* transport);
 void mcs_free(rdpMcs* mcs);

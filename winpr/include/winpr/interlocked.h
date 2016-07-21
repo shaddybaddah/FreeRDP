@@ -31,10 +31,12 @@ extern "C" {
 
 #ifndef _WIN32
 
+#ifdef __IOS__
 /* workaround for SLIST_ENTRY conflict */
 
 #include <sys/queue.h>
 #undef SLIST_ENTRY
+#endif
 
 #ifndef CONTAINING_RECORD
 #define CONTAINING_RECORD(address, type, field) \
@@ -158,7 +160,7 @@ WINPR_API PVOID InterlockedCompareExchangePointer(PVOID volatile *Destination, P
 
 #endif /* _WIN32 */
 
-#if (!defined(_WIN32) || (defined(_WIN32) && (_WIN32_WINNT < 0x0502)))
+#if (!defined(_WIN32) || (defined(_WIN32) && (_WIN32_WINNT < 0x0502) && !defined(InterlockedCompareExchange64)))
 #define WINPR_INTERLOCKED_COMPARE_EXCHANGE64	1
 #endif
 

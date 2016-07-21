@@ -28,10 +28,20 @@
 
 #include <winpr/crt.h>
 #include <winpr/heap.h>
+#include <winpr/file.h>
 #include <winpr/tchar.h>
 #include <winpr/environment.h>
 
 #include <winpr/path.h>
+
+#if defined(WIN32)
+#include <Shlobj.h>
+#else
+#include <errno.h>
+#endif
+
+static char* GetPath_XDG_CONFIG_HOME(void);
+static char* GetPath_XDG_RUNTIME_DIR(void);
 
 /**
  * SHGetKnownFolderPath function:
@@ -43,7 +53,7 @@
  * http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
  */
 
-char* GetEnvAlloc(LPCSTR lpName)
+static char* GetEnvAlloc(LPCSTR lpName)
 {
 	DWORD length;
 	char* env = NULL;
@@ -53,6 +63,8 @@ char* GetEnvAlloc(LPCSTR lpName)
 	if (length > 0)
 	{
 		env = malloc(length + 1);
+		if (!env)
+			return NULL;
 		GetEnvironmentVariableA(lpName, env, length + 1);
 		env[length] = '\0';
 	}
@@ -60,15 +72,12 @@ char* GetEnvAlloc(LPCSTR lpName)
 	return env;
 }
 
-char* GetPath_HOME()
+static char* GetPath_HOME(void)
 {
 	char* path = NULL;
 
 #ifdef _WIN32
 	path = GetEnvAlloc("UserProfile");
-#elif defined(ANDROID)
-	path = malloc(2);
-	strcpy(path, "/");
 #else
 	path = GetEnvAlloc("HOME");
 #endif
@@ -76,7 +85,7 @@ char* GetPath_HOME()
 	return path;
 }
 
-char* GetPath_TEMP()
+static char* GetPath_TEMP(void)
 {
 	char* path = NULL;
 
@@ -92,11 +101,14 @@ char* GetPath_TEMP()
 	return path;
 }
 
-char* GetPath_XDG_DATA_HOME()
+static char* GetPath_XDG_DATA_HOME(void)
 {
 	char* path = NULL;
-	char* home = NULL;
 
+#if defined(WIN32)
+	path = GetPath_XDG_CONFIG_HOME();
+#else
+	char* home = NULL;
 	/**
 	 * There is a single base directory relative to which user-specific data files should be written.
 	 * This directory is defined by the environment variable $XDG_DATA_HOME.
@@ -111,20 +123,39 @@ char* GetPath_XDG_DATA_HOME()
 		return path;
 
 	home = GetPath_HOME();
+	if (!home)
+		return NULL;
 
 	path = (char*) malloc(strlen(home) + strlen("/.local/share") + 1);
+	if (!path)
+	{
+		free(home);
+		return NULL;
+	}
 	sprintf(path, "%s%s", home, "/.local/share");
 
 	free(home);
+#endif
 
 	return path;
 }
 
-char* GetPath_XDG_CONFIG_HOME()
+static char* GetPath_XDG_CONFIG_HOME(void)
 {
 	char* path = NULL;
-	char* home = NULL;
 
+#if defined(WIN32) && !defined(_UWP)
+	path = calloc(MAX_PATH, sizeof(char));
+	if (!path)
+		return NULL;
+
+	if (FAILED(SHGetFolderPathA(0, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, path)))
+	{
+		free(path);
+		return NULL;
+	}
+#else
+	char* home = NULL;
 	/**
 	 * There is a single base directory relative to which user-specific configuration files should be written.
 	 * This directory is defined by the environment variable $XDG_CONFIG_HOME.
@@ -143,19 +174,39 @@ char* GetPath_XDG_CONFIG_HOME()
 	if (!home)
 		home = GetPath_TEMP();
 
+	if (!home)
+		return NULL;
+
 	path = (char*) malloc(strlen(home) + strlen("/.config") + 1);
+	if (!path)
+	{
+		free(home);
+		return NULL;
+	}
 	sprintf(path, "%s%s", home, "/.config");
 
 	free(home);
+#endif
 
 	return path;
 }
 
-char* GetPath_XDG_CACHE_HOME()
+static char* GetPath_XDG_CACHE_HOME(void)
 {
 	char* path = NULL;
 	char* home = NULL;
 
+#if defined(WIN32)
+	home = GetPath_XDG_RUNTIME_DIR();
+	if (home)
+	{
+		path = GetCombinedPath(home, "cache");
+		if (!PathFileExistsA(path))
+			if (!CreateDirectoryA(path, NULL))
+				path = NULL;
+	}
+	free(home);
+#else
 	/**
 	 * There is a single base directory relative to which user-specific non-essential (cached) data should be written.
 	 * This directory is defined by the environment variable $XDG_CACHE_HOME.
@@ -170,19 +221,38 @@ char* GetPath_XDG_CACHE_HOME()
 		return path;
 
 	home = GetPath_HOME();
+	if (!home)
+		return NULL;
 
 	path = (char*) malloc(strlen(home) + strlen("/.cache") + 1);
+	if (!path)
+	{
+		free(home);
+		return NULL;
+	}
 	sprintf(path, "%s%s", home, "/.cache");
 
 	free(home);
+#endif
 
 	return path;
 }
 
-char* GetPath_XDG_RUNTIME_DIR()
+char* GetPath_XDG_RUNTIME_DIR(void)
 {
 	char* path = NULL;
 
+#if defined(WIN32) && !defined(_UWP)
+	path = calloc(MAX_PATH, sizeof(char));
+	if (!path)
+		return NULL;
+
+	if (FAILED(SHGetFolderPathA(0, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, path)))
+	{
+		free(path);
+		return NULL;
+	}
+#else
 	/**
 	 * There is a single base directory relative to which user-specific runtime files and other file objects should be placed.
 	 * This directory is defined by the environment variable $XDG_RUNTIME_DIR.
@@ -211,6 +281,7 @@ char* GetPath_XDG_RUNTIME_DIR()
 	 */
 
 	path = GetEnvAlloc("XDG_RUNTIME_DIR");
+#endif
 
 	if (path)
 		return path;
@@ -232,6 +303,7 @@ char* GetKnownPath(int id)
 
 		case KNOWN_PATH_TEMP:
 			path = GetPath_TEMP();
+
 			break;
 
 		case KNOWN_PATH_XDG_DATA_HOME:
@@ -264,6 +336,8 @@ char* GetKnownSubPath(int id, const char* path)
 	char* knownPath;
 
 	knownPath = GetKnownPath(id);
+	if (!knownPath)
+		return NULL;
 	subPath = GetCombinedPath(knownPath, path);
 
 	free(knownPath);
@@ -281,6 +355,8 @@ char* GetEnvironmentPath(char* name)
 	if (nSize)
 	{
 		env = (LPSTR) malloc(nSize);
+		if (!env)
+			return NULL;
 		nSize = GetEnvironmentVariableA(name, env, nSize);
 	}
 
@@ -314,9 +390,9 @@ char* GetCombinedPath(const char* basePath, const char* subPath)
 	int subPathLength = 0;
 
 	if (basePath)
-		basePathLength = strlen(basePath);
+		basePathLength = (int) strlen(basePath);
 	if (subPath)
-		subPathLength = strlen(subPath);
+		subPathLength = (int) strlen(subPath);
 
 	length = basePathLength + subPathLength + 1;
 	path = (char*) malloc(length + 1);
@@ -327,20 +403,75 @@ char* GetCombinedPath(const char* basePath, const char* subPath)
 		CopyMemory(path, basePath, basePathLength);
 	path[basePathLength] = '\0';
 
-	PathCchConvertStyleA(path, basePathLength, PATH_STYLE_NATIVE);
+	if (FAILED(PathCchConvertStyleA(path, basePathLength, PATH_STYLE_NATIVE)))
+	{
+		free(path);
+		return NULL;
+	}
 
 	if (!subPath)
 		return path;
 
 	subPathCpy = _strdup(subPath);
-	PathCchConvertStyleA(subPathCpy, subPathLength, PATH_STYLE_NATIVE);
+	if (!subPathCpy)
+	{
+		free(path);
+		return NULL;
+	}
+	if (FAILED(PathCchConvertStyleA(subPathCpy, subPathLength, PATH_STYLE_NATIVE)))
+	{
+		free(path);
+		free(subPathCpy);
+		return NULL;
+	}
 
 	status = NativePathCchAppendA(path, length + 1, subPathCpy);
 
 	free(subPathCpy);
 
-	return path;
+	if (FAILED(status))
+	{
+		free(path);
+		return NULL;
+	}
+	else
+		return path;
 }
+
+BOOL PathMakePathA(LPCSTR path, LPSECURITY_ATTRIBUTES lpAttributes)
+{
+#ifdef _WIN32
+	return (SHCreateDirectoryExA(NULL, path, lpAttributes) == ERROR_SUCCESS);
+#else
+	const char delim = PathGetSeparatorA(PATH_STYLE_NATIVE);
+	char* dup;
+	char* p;
+
+	/* we only operate on a non-null, absolute path */
+	if (!path || *path != delim)
+		return FALSE;
+
+	if (!(dup = _strdup(path)))
+		return FALSE;
+
+	for (p = dup; p;)
+	{
+		if ((p = strchr(p + 1, delim)))
+			*p = '\0';
+
+		if (mkdir(dup, 0777) != 0)
+			if (errno != EEXIST)
+				break;
+		if (p)
+			*p = delim;
+	}
+
+	free(dup);
+	return (p == NULL);
+#endif
+}
+
+#if !defined(_WIN32) || defined(_UWP)
 
 BOOL PathFileExistsA(LPCSTR pszPath)
 {
@@ -357,3 +488,10 @@ BOOL PathFileExistsW(LPCWSTR pszPath)
 	return FALSE;
 }
 
+#else
+
+#ifdef _WIN32
+#pragma comment(lib, "shlwapi.lib")
+#endif
+
+#endif

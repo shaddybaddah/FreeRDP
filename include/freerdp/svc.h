@@ -3,6 +3,8 @@
  * Static Virtual Channel Interface
  *
  * Copyright 2009-2011 Jay Sorg
+ * Copyright 2015 Thincast Technologies GmbH
+ * Copyright 2015 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +26,11 @@
 #include <freerdp/types.h>
 
 #include <winpr/wtsapi.h>
+#include <freerdp/freerdp.h>
 
 #define CHANNEL_EVENT_USER	1000
 
 #define CHANNEL_EXPORT_FUNC_NAME "VirtualChannelEntry"
-
-typedef UINT (FREERDP_CC * PVIRTUALCHANNELEVENTPUSH)(DWORD openHandle, wMessage* event);
 
 #define FREERDP_CHANNEL_MAGIC_NUMBER	0x46524450
 
@@ -47,7 +48,7 @@ struct _CHANNEL_ENTRY_POINTS_FREERDP
 	void* pExtendedData; /* extended initial data */
 	void* pInterface; /* channel callback interface, use after initialization */
 	void** ppInterface; /* channel callback interface, use for initialization */
-	PVIRTUALCHANNELEVENTPUSH pVirtualChannelEventPush;
+	rdpContext* context;
 };
 typedef struct _CHANNEL_ENTRY_POINTS_FREERDP CHANNEL_ENTRY_POINTS_FREERDP;
 typedef CHANNEL_ENTRY_POINTS_FREERDP* PCHANNEL_ENTRY_POINTS_FREERDP;

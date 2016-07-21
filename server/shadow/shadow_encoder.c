@@ -24,15 +24,37 @@
 
 #include "shadow_encoder.h"
 
-int shadow_encoder_create_frame_id(rdpShadowEncoder* encoder)
+int shadow_encoder_preferred_fps(rdpShadowEncoder* encoder)
+{
+	/* Return preferred fps calculated according to the last
+	 * sent frame id and last client-acknowledged frame id.
+	 */
+	return encoder->fps;
+}
+
+UINT32 shadow_encoder_inflight_frames(rdpShadowEncoder* encoder)
+{
+	/* Return inflight frame count =
+	 * <last sent frame id> - <last client-acknowledged frame id>
+	 * Note: This function is exported so that subsystem could
+	 * implement its own strategy to tune fps.
+	 */
+	return encoder->frameId - encoder->lastAckframeId;
+}
+
+UINT32 shadow_encoder_create_frame_id(rdpShadowEncoder* encoder)
 {
 	UINT32 frameId;
 	int inFlightFrames;
-	SURFACE_FRAME* frame;
 
-	inFlightFrames = ListDictionary_Count(encoder->frameList);
+	inFlightFrames = shadow_encoder_inflight_frames(encoder);
 
-	if (inFlightFrames > encoder->frameAck)
+    /*
+     * Calculate preferred fps according to how much frames are
+	 * in-progress. Note that it only works when subsytem implementation
+	 * calls shadow_encoder_preferred_fps and takes the suggestion.
+     */
+	if (inFlightFrames > 1)
 	{
 		encoder->fps = (100 / (inFlightFrames + 1) * encoder->maxFps) / 100;
 	}
@@ -47,15 +69,9 @@ int shadow_encoder_create_frame_id(rdpShadowEncoder* encoder)
 	if (encoder->fps < 1)
 		encoder->fps = 1;
 
-	frame = (SURFACE_FRAME*) malloc(sizeof(SURFACE_FRAME));
+	frameId = ++encoder->frameId;
 
-	if (!frame)
-		return -1;
-
-	frameId = frame->frameId = ++encoder->frameId;
-	ListDictionary_Add(encoder->frameList, (void*) (size_t) frame->frameId, frame);
-
-	return (int) frame->frameId;
+	return frameId;
 }
 
 int shadow_encoder_init_grid(rdpShadowEncoder* encoder)
@@ -121,7 +137,10 @@ int shadow_encoder_init_rfx(rdpShadowEncoder* encoder)
 		encoder->rfx = rfx_context_new(TRUE);
 
 	if (!encoder->rfx)
-		return -1;
+		goto fail;
+
+	if (!rfx_context_reset(encoder->rfx, encoder->width, encoder->height))
+		goto fail;
 
 	encoder->rfx->mode = RLGR3;
 	encoder->rfx->width = encoder->width;
@@ -129,18 +148,19 @@ int shadow_encoder_init_rfx(rdpShadowEncoder* encoder)
 
 	rfx_context_set_pixel_format(encoder->rfx, RDP_PIXEL_FORMAT_B8G8R8A8);
 
-	if (!encoder->frameList)
-	{
-		encoder->fps = 16;
-		encoder->maxFps = 32;
-		encoder->frameId = 0;
-		encoder->frameList = ListDictionary_New(TRUE);
-		encoder->frameAck = settings->SurfaceFrameMarkerEnabled;
-	}
+	encoder->fps = 16;
+	encoder->maxFps = 32;
+	encoder->frameId = 0;
+	encoder->lastAckframeId = 0;
+	encoder->frameAck = settings->SurfaceFrameMarkerEnabled;
 
 	encoder->codecs |= FREERDP_CODEC_REMOTEFX;
 
 	return 1;
+
+fail:
+	rfx_context_free(encoder->rfx);
+	return -1;
 }
 
 int shadow_encoder_init_nsc(rdpShadowEncoder* encoder)
@@ -156,14 +176,11 @@ int shadow_encoder_init_nsc(rdpShadowEncoder* encoder)
 
 	nsc_context_set_pixel_format(encoder->nsc, RDP_PIXEL_FORMAT_B8G8R8A8);
 
-	if (!encoder->frameList)
-	{
-		encoder->fps = 16;
-		encoder->maxFps = 32;
-		encoder->frameId = 0;
-		encoder->frameList = ListDictionary_New(TRUE);
-		encoder->frameAck = settings->SurfaceFrameMarkerEnabled;
-	}
+	encoder->fps = 16;
+	encoder->maxFps = 32;
+	encoder->frameId = 0;
+	encoder->lastAckframeId = 0;
+	encoder->frameAck = settings->SurfaceFrameMarkerEnabled;
 
 	encoder->nsc->ColorLossLevel = settings->NSCodecColorLossLevel;
 	encoder->nsc->ChromaSubsamplingLevel = settings->NSCodecAllowSubsampling ? 1 : 0;
@@ -214,6 +231,9 @@ int shadow_encoder_init_interleaved(rdpShadowEncoder* encoder)
 
 int shadow_encoder_init(rdpShadowEncoder* encoder)
 {
+	encoder->width = encoder->server->screen->width;
+	encoder->height = encoder->server->screen->height;
+
 	encoder->maxTileWidth = 64;
 	encoder->maxTileHeight = 64;
 
@@ -236,12 +256,6 @@ int shadow_encoder_uninit_rfx(rdpShadowEncoder* encoder)
 		encoder->rfx = NULL;
 	}
 
-	if (encoder->frameList)
-	{
-		ListDictionary_Free(encoder->frameList);
-		encoder->frameList = NULL;
-	}
-
 	encoder->codecs &= ~FREERDP_CODEC_REMOTEFX;
 
 	return 1;
@@ -253,12 +267,6 @@ int shadow_encoder_uninit_nsc(rdpShadowEncoder* encoder)
 	{
 		nsc_context_free(encoder->nsc);
 		encoder->nsc = NULL;
-	}
-
-	if (encoder->frameList)
-	{
-		ListDictionary_Free(encoder->frameList);
-		encoder->frameList = NULL;
 	}
 
 	encoder->codecs &= ~FREERDP_CODEC_NSCODEC;
@@ -403,11 +411,11 @@ rdpShadowEncoder* shadow_encoder_new(rdpShadowClient* client)
 	encoder->fps = 16;
 	encoder->maxFps = 32;
 
-	encoder->width = server->screen->width;
-	encoder->height = server->screen->height;
-
 	if (shadow_encoder_init(encoder) < 0)
+	{
+		free (encoder);
 		return NULL;
+	}
 
 	return encoder;
 }

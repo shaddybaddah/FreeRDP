@@ -28,6 +28,7 @@
 struct xf_gfx_surface
 {
 	UINT16 surfaceId;
+	rdpCodecs* codecs;
 	UINT32 width;
 	UINT32 height;
 	BOOL alpha;
@@ -37,6 +38,10 @@ struct xf_gfx_surface
 	int scanline;
 	int stageStep;
 	UINT32 format;
+	BOOL outputMapped;
+	UINT32 outputOriginX;
+	UINT32 outputOriginY;
+	REGION16 invalidRegion;
 };
 typedef struct xf_gfx_surface xfGfxSurface;
 

@@ -13,7 +13,13 @@
 
 int test_gdi_GetDC(void)
 {
-	HGDI_DC hdc = gdi_GetDC();
+	HGDI_DC hdc;
+
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
 
 	if (hdc->bytesPerPixel != 4)
 		return -1;
@@ -32,12 +38,21 @@ int test_gdi_CreateCompatibleDC(void)
 	HGDI_DC hdc;
 	HGDI_DC chdc;
 
-	hdc = gdi_GetDC();
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
+
 	hdc->bytesPerPixel = 2;
 	hdc->bitsPerPixel = 16;
 	hdc->drawMode = GDI_R2_XORPEN;
 
-	chdc = gdi_CreateCompatibleDC(hdc);
+	if (!(chdc = gdi_CreateCompatibleDC(hdc)))
+	{
+		printf("gdi_CreateCompatibleDC failed\n");
+		return -1;
+	}
 
 	if (chdc->bytesPerPixel != hdc->bytesPerPixel)
 		return -1;
@@ -62,8 +77,17 @@ int test_gdi_CreateBitmap(void)
 	bpp = 32;
 	width = 32;
 	height = 16;
-	data = (BYTE*) malloc(width * height * 4);
-	hBitmap = gdi_CreateBitmap(width, height, bpp, data);
+	if (!(data = (BYTE*) _aligned_malloc(width * height * 4, 16)))
+	{
+		printf("failed to allocate aligned bitmap data memory\n");
+		return -1;
+	}
+
+	if (!(hBitmap = gdi_CreateBitmap(width, height, bpp, data)))
+	{
+		printf("gdi_CreateBitmap failed\n");
+		return -1;
+	}
 
 	if (hBitmap->objectType != GDIOBJECT_BITMAP)
 		return -1;
@@ -92,7 +116,12 @@ int test_gdi_CreateCompatibleBitmap(void)
 	int height;
 	HGDI_BITMAP hBitmap;
 
-	hdc = gdi_GetDC();
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
+
 	hdc->bytesPerPixel = 4;
 	hdc->bitsPerPixel = 32;
 
@@ -126,6 +155,12 @@ int test_gdi_CreateCompatibleBitmap(void)
 int test_gdi_CreatePen(void)
 {
 	HGDI_PEN hPen = gdi_CreatePen(GDI_PS_SOLID, 8, 0xAABBCCDD);
+
+	if (!hPen)
+	{
+		printf("gdi_CreatePen failed\n");
+		return -1;
+	}
 
 	if (hPen->style != GDI_PS_SOLID)
 		return -1;
@@ -215,12 +250,17 @@ int test_gdi_CreateRectRgn(void)
 
 int test_gdi_CreateRect(void)
 {
+	HGDI_RECT hRect;
 	int x1 = 32;
 	int y1 = 64;
 	int x2 = 128;
 	int y2 = 256;
 
-	HGDI_RECT hRect = gdi_CreateRect(x1, y1, x2, y2);
+	if (!(hRect = gdi_CreateRect(x1, y1, x2, y2)))
+	{
+		printf("gdi_CreateRect failed\n");
+		return -1;
+	}
 
 	if (hRect->objectType != GDIOBJECT_RECT)
 		return -1;
@@ -249,7 +289,12 @@ int test_gdi_GetPixel(void)
 	int height = 64;
 	HGDI_BITMAP hBitmap;
 
-	hdc = gdi_GetDC();
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
+
 	hdc->bytesPerPixel = 4;
 	hdc->bitsPerPixel = 32;
 
@@ -276,7 +321,12 @@ int test_gdi_SetPixel(void)
 	int height = 64;
 	HGDI_BITMAP hBitmap;
 
-	hdc = gdi_GetDC();
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
+
 	hdc->bytesPerPixel = 4;
 	hdc->bitsPerPixel = 32;
 
@@ -300,7 +350,13 @@ int test_gdi_SetPixel(void)
 
 int test_gdi_SetROP2(void)
 {
-	HGDI_DC hdc = gdi_GetDC();
+	HGDI_DC hdc;
+
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
 
 	gdi_SetROP2(hdc, GDI_R2_BLACK);
 
@@ -316,8 +372,18 @@ int test_gdi_MoveToEx(void)
 	HGDI_PEN hPen;
 	HGDI_POINT prevPoint;
 
-	hdc = gdi_GetDC();
-	hPen = gdi_CreatePen(GDI_PS_SOLID, 8, 0xAABBCCDD);
+	if (!(hdc = gdi_GetDC()))
+	{
+		printf("failed to get gdi device context\n");
+		return -1;
+	}
+
+	if (!(hPen = gdi_CreatePen(GDI_PS_SOLID, 8, 0xAABBCCDD)))
+	{
+		printf("gdi_CreatePen failed\n");
+		return -1;
+	}
+
 	gdi_SelectObject(hdc, (HGDIOBJECT) hPen);
 	gdi_MoveToEx(hdc, 128, 256, NULL);
 

@@ -21,12 +21,16 @@
 #include "config.h"
 #endif
 
+#include <assert.h>
+
 #include "ntlm.h"
 #include "../sspi.h"
 
 #include <winpr/crt.h>
 #include <winpr/print.h>
 #include <winpr/sysinfo.h>
+#include <winpr/tchar.h>
+#include <winpr/crypto.h>
 
 #include "ntlm_compute.h"
 
@@ -143,6 +147,7 @@ NTLM_AV_PAIR* ntlm_av_pair_add(NTLM_AV_PAIR* pAvPairList, NTLM_AV_ID AvId, PBYTE
 	if (!pAvPair)
 		return NULL;
 
+	assert(Value != NULL);
 	pAvPair->AvId = AvId;
 	pAvPair->AvLen = AvLen;
 	CopyMemory(ntlm_av_pair_get_value_pointer(pAvPair), Value, AvLen);
@@ -168,14 +173,14 @@ int ntlm_get_target_computer_name(PUNICODE_STRING pName, COMPUTER_NAME_FORMAT ty
 {
 	char* name;
 	int status;
-	DWORD nSize = 0;
-	GetComputerNameExA(type, NULL, &nSize);
-	name = (char*) malloc(nSize);
+	CHAR computerName[MAX_COMPUTERNAME_LENGTH + 1];
+	DWORD nSize = sizeof(computerName) / sizeof(CHAR);
 
-	if (!name)
+	if (!GetComputerNameExA(type, computerName, &nSize))
 		return -1;
 
-	if (!GetComputerNameExA(type, name, &nSize))
+	name = _strdup(computerName);
+	if (!name)
 		return -1;
 
 	if (type == ComputerNameNetBIOS)
@@ -184,7 +189,10 @@ int ntlm_get_target_computer_name(PUNICODE_STRING pName, COMPUTER_NAME_FORMAT ty
 	status = ConvertToUnicode(CP_UTF8, 0, name, -1, &pName->Buffer, 0);
 
 	if (status <= 0)
+	{
+		free(name);
 		return status;
+	}
 
 	pName->Length = (USHORT)((status - 1) * 2);
 	pName->MaximumLength = pName->Length;
@@ -198,8 +206,7 @@ void ntlm_free_unicode_string(PUNICODE_STRING string)
 	{
 		if (string->Length > 0)
 		{
-			if (string->Buffer)
-				free(string->Buffer);
+			free(string->Buffer);
 
 			string->Buffer = NULL;
 			string->Length = 0;
@@ -236,23 +243,24 @@ typedef struct gss_channel_bindings_struct {
 } *gss_channel_bindings_t;
  */
 
-static void ntlm_md5_update_uint32_be(MD5_CTX* md5, UINT32 num)
+static void ntlm_md5_update_uint32_be(WINPR_MD5_CTX* md5, UINT32 num)
 {
 	BYTE be32[4];
 	be32[0] = (num >> 0) & 0xFF;
 	be32[1] = (num >> 8) & 0xFF;
 	be32[2] = (num >> 16) & 0xFF;
 	be32[3] = (num >> 24) & 0xFF;
-	MD5_Update(md5, be32, 4);
+	winpr_MD5_Update(md5, be32, 4);
 }
 
 void ntlm_compute_channel_bindings(NTLM_CONTEXT* context)
 {
-	MD5_CTX md5;
+	WINPR_MD5_CTX md5;
 	BYTE* ChannelBindingToken;
 	UINT32 ChannelBindingTokenLength;
 	SEC_CHANNEL_BINDINGS* ChannelBindings;
-	ZeroMemory(context->ChannelBindingsHash, 16);
+
+	ZeroMemory(context->ChannelBindingsHash, WINPR_MD5_DIGEST_LENGTH);
 	ChannelBindings = context->Bindings.Bindings;
 
 	if (!ChannelBindings)
@@ -260,14 +268,14 @@ void ntlm_compute_channel_bindings(NTLM_CONTEXT* context)
 
 	ChannelBindingTokenLength = context->Bindings.BindingsLength - sizeof(SEC_CHANNEL_BINDINGS);
 	ChannelBindingToken = &((BYTE*) ChannelBindings)[ChannelBindings->dwApplicationDataOffset];
-	MD5_Init(&md5);
+	winpr_MD5_Init(&md5);
 	ntlm_md5_update_uint32_be(&md5, ChannelBindings->dwInitiatorAddrType);
 	ntlm_md5_update_uint32_be(&md5, ChannelBindings->cbInitiatorLength);
 	ntlm_md5_update_uint32_be(&md5, ChannelBindings->dwAcceptorAddrType);
 	ntlm_md5_update_uint32_be(&md5, ChannelBindings->cbAcceptorLength);
 	ntlm_md5_update_uint32_be(&md5, ChannelBindings->cbApplicationDataLength);
-	MD5_Update(&md5, (void*) ChannelBindingToken, ChannelBindingTokenLength);
-	MD5_Final(context->ChannelBindingsHash, &md5);
+	winpr_MD5_Update(&md5, (void*) ChannelBindingToken, ChannelBindingTokenLength);
+	winpr_MD5_Final(&md5, context->ChannelBindingsHash, WINPR_MD5_DIGEST_LENGTH);
 }
 
 void ntlm_compute_single_host_data(NTLM_CONTEXT* context)
@@ -437,7 +445,8 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 	if (context->NTLMv2)
 		size += 8; /* unknown 8-byte padding */
 
-	sspi_SecBufferAlloc(&context->AuthenticateTargetInfo, size);
+	if (!sspi_SecBufferAlloc(&context->AuthenticateTargetInfo, size))
+		return -1;
 	AuthenticateTargetInfo = (NTLM_AV_PAIR*) context->AuthenticateTargetInfo.pvBuffer;
 	ntlm_av_pair_list_init(AuthenticateTargetInfo);
 

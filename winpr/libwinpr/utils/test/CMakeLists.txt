@@ -6,16 +6,21 @@ set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 
 set(${MODULE_PREFIX}_TESTS
 	TestIni.c
+	TestVersion.c
 	TestImage.c
+	TestBipBuffer.c
+	TestBacktrace.c
 	TestQueue.c
 	TestPrint.c
 	TestPubSub.c
+	TestStream.c
 	TestBitStream.c
 	TestArrayList.c
 	TestLinkedList.c
 	TestListDictionary.c
 	TestCmdLine.c
 	TestWLog.c
+	TestWLogCallback.c
 	TestHashTable.c
 	TestBufferPool.c
 	TestStreamPool.c
@@ -25,6 +30,8 @@ set(${MODULE_PREFIX}_TESTS
 create_test_sourcelist(${MODULE_PREFIX}_SRCS
 	${${MODULE_PREFIX}_DRIVER}
 	${${MODULE_PREFIX}_TESTS})
+
+add_definitions(-DTEST_SOURCE_PATH="${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_executable(${MODULE_NAME} ${${MODULE_PREFIX}_SRCS})
 

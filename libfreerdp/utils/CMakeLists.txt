@@ -19,17 +19,12 @@ set(MODULE_NAME "freerdp-utils")
 set(MODULE_PREFIX "FREERDP_UTILS")
 
 set(${MODULE_PREFIX}_SRCS
-	event.c
 	passphrase.c
 	pcap.c
 	profiler.c
 	ringbuffer.c
 	signal.c
-	stopwatch.c
-	svc_plugin.c
-	tcp.c
-	time.c
-	uds.c)
+	stopwatch.c)
 
 if(NOT WIN32)
 	set(${MODULE_PREFIX}_SRCS ${${MODULE_PREFIX}_SRCS} msusb.c)
@@ -37,7 +32,7 @@ endif()
 
 freerdp_module_add(${${MODULE_PREFIX}_SRCS})
 
-freerdp_library_add(${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+freerdp_library_add(${CMAKE_THREAD_LIBS_INIT})
 
 if(WIN32)
 	freerdp_library_add(ws2_32)

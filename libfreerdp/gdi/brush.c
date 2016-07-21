@@ -24,7 +24,6 @@
 #endif
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
 
 #include <freerdp/freerdp.h>
@@ -54,7 +53,9 @@ p_PatBlt PatBlt_[5] =
 
 HGDI_BRUSH gdi_CreateSolidBrush(GDI_COLOR crColor)
 {
-	HGDI_BRUSH hBrush = (HGDI_BRUSH) malloc(sizeof(GDI_BRUSH));
+	HGDI_BRUSH hBrush = (HGDI_BRUSH) calloc(1, sizeof(GDI_BRUSH));
+	if (!hBrush)
+		return NULL;
 	hBrush->objectType = GDIOBJECT_BRUSH;
 	hBrush->style = GDI_BS_SOLID;
 	hBrush->color = crColor;
@@ -70,7 +71,9 @@ HGDI_BRUSH gdi_CreateSolidBrush(GDI_COLOR crColor)
 
 HGDI_BRUSH gdi_CreatePatternBrush(HGDI_BITMAP hbmp)
 {
-	HGDI_BRUSH hBrush = (HGDI_BRUSH) malloc(sizeof(GDI_BRUSH));
+	HGDI_BRUSH hBrush = (HGDI_BRUSH) calloc(1, sizeof(GDI_BRUSH));
+	if (!hBrush)
+		return NULL;
 	hBrush->objectType = GDIOBJECT_BRUSH;
 	hBrush->style = GDI_BS_PATTERN;
 	hBrush->pattern = hbmp;
@@ -79,7 +82,9 @@ HGDI_BRUSH gdi_CreatePatternBrush(HGDI_BITMAP hbmp)
 
 HGDI_BRUSH gdi_CreateHatchBrush(HGDI_BITMAP hbmp)
 {
-	HGDI_BRUSH hBrush = (HGDI_BRUSH) malloc(sizeof(GDI_BRUSH));
+	HGDI_BRUSH hBrush = (HGDI_BRUSH) calloc(1, sizeof(GDI_BRUSH));
+	if (!hBrush)
+		return NULL;
 	hBrush->objectType = GDIOBJECT_BRUSH;
 	hBrush->style = GDI_BS_HATCHED;
 	hBrush->pattern = hbmp;
@@ -95,15 +100,15 @@ HGDI_BRUSH gdi_CreateHatchBrush(HGDI_BITMAP hbmp)
  * @param nWidth width
  * @param nHeight height
  * @param rop raster operation code
- * @return 1 if successful, 0 otherwise
+ * @return nonzero if successful, 0 otherwise
  */
 
-int gdi_PatBlt(HGDI_DC hdc, int nXLeft, int nYLeft, int nWidth, int nHeight, int rop)
+BOOL gdi_PatBlt(HGDI_DC hdc, int nXLeft, int nYLeft, int nWidth, int nHeight, DWORD rop)
 {
 	p_PatBlt _PatBlt = PatBlt_[IBPP(hdc->bitsPerPixel)];
 
-	if (_PatBlt != NULL)
-		return _PatBlt(hdc, nXLeft, nYLeft, nWidth, nHeight, rop);
-	else
-		return 0;
+	if (_PatBlt == NULL)
+		return FALSE;
+
+	return _PatBlt(hdc, nXLeft, nYLeft, nWidth, nHeight, rop);
 }

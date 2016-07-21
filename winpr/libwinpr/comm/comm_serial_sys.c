@@ -849,6 +849,12 @@ static BOOL _set_timeouts(WINPR_COMM *pComm, const SERIAL_TIMEOUTS *pTimeouts)
 	pComm->timeouts.WriteTotalTimeoutMultiplier = pTimeouts->WriteTotalTimeoutMultiplier;
 	pComm->timeouts.WriteTotalTimeoutConstant   = pTimeouts->WriteTotalTimeoutConstant;
 
+	CommLog_Print(WLOG_DEBUG, "ReadIntervalTimeout %d", pComm->timeouts.ReadIntervalTimeout);
+	CommLog_Print(WLOG_DEBUG, "ReadTotalTimeoutMultiplier %d", pComm->timeouts.ReadTotalTimeoutMultiplier);
+	CommLog_Print(WLOG_DEBUG, "ReadTotalTimeoutConstant %d", pComm->timeouts.ReadTotalTimeoutConstant);
+	CommLog_Print(WLOG_DEBUG, "WriteTotalTimeoutMultiplier %d", pComm->timeouts.WriteTotalTimeoutMultiplier);
+	CommLog_Print(WLOG_DEBUG, "WriteTotalTimeoutConstant %d", pComm->timeouts.WriteTotalTimeoutConstant);
+
 	return TRUE;
 }
 
@@ -1042,11 +1048,19 @@ static BOOL _set_wait_mask(WINPR_COMM *pComm, const ULONG *pWaitMask)
 
 		if (ioctl(pComm->fd, TIOCGICOUNT, &(pComm->counters)) < 0)
 		{
-			CommLog_Print(WLOG_WARN, "TIOCGICOUNT ioctl failed, errno=[%d] %s", errno, strerror(errno));
-			SetLastError(ERROR_IO_DEVICE);
-
-			LeaveCriticalSection(&pComm->EventsLock);
-			return FALSE;
+			CommLog_Print(WLOG_WARN, "TIOCGICOUNT ioctl failed, errno=[%d] %s.", errno, strerror(errno));
+			
+			if (pComm->permissive)
+			{
+				/* counters could not be reset but keep on */
+				ZeroMemory(&(pComm->counters), sizeof(struct serial_icounter_struct));
+			}
+			else
+			{
+				SetLastError(ERROR_IO_DEVICE);
+				LeaveCriticalSection(&pComm->EventsLock);
+				return FALSE;
+			}
 		}
 
 		pComm->PendingEvents = 0;
@@ -1188,11 +1202,22 @@ static BOOL _get_commstatus(WINPR_COMM *pComm, SERIAL_STATUS *pCommstatus)
 	ZeroMemory(&currentCounters, sizeof(struct serial_icounter_struct));
 	if (ioctl(pComm->fd, TIOCGICOUNT, &currentCounters) < 0)
 	{
-		CommLog_Print(WLOG_WARN, "TIOCGICOUNT ioctl failed, errno=[%d] %s", errno, strerror(errno));
-		SetLastError(ERROR_IO_DEVICE);
-
-		LeaveCriticalSection(&pComm->EventsLock);
-		return FALSE;
+		CommLog_Print(WLOG_WARN, "TIOCGICOUNT ioctl failed, errno=[%d] %s.", errno, strerror(errno));
+		CommLog_Print(WLOG_WARN, "  coult not read counters.");
+		
+		if (pComm->permissive)
+		{
+			/* Errors and events based on counters could not be
+			 * detected but keep on.
+			 */
+			ZeroMemory(&currentCounters, sizeof(struct serial_icounter_struct));
+		}
+		else
+		{
+			SetLastError(ERROR_IO_DEVICE);
+			LeaveCriticalSection(&pComm->EventsLock);
+			return FALSE;
+		}
 	}
 
 	/* NB: preferred below (currentCounters.* != pComm->counters.*) over (currentCounters.* > pComm->counters.*) thinking the counters can loop */
@@ -1319,7 +1344,7 @@ static BOOL _get_commstatus(WINPR_COMM *pComm, SERIAL_STATUS *pCommstatus)
 	}
 	else
 	{
-		/* FIXME: "is 80 percent full" from the specs is ambiguous, need to track when it previously occured? */
+		/* FIXME: "is 80 percent full" from the specs is ambiguous, need to track when it previously * occurred? */
 		pComm->PendingEvents &= ~SERIAL_EV_RX80FULL;
 	}
 

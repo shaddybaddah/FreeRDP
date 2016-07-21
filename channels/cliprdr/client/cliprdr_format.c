@@ -4,6 +4,8 @@
  *
  * Copyright 2009-2011 Jay Sorg
  * Copyright 2010-2011 Vic Lee
+ * Copyright 2015 Thincast Technologies GmbH
+ * Copyright 2015 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,230 +34,305 @@
 #include "cliprdr_main.h"
 #include "cliprdr_format.h"
 
-void cliprdr_process_short_format_names(cliprdrPlugin* cliprdr, wStream* s, UINT32 length, UINT16 flags)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+UINT cliprdr_process_format_list(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
 {
-	int i;
-	BOOL ascii;
-	int num_formats;
-	CLIPRDR_FORMAT_NAME* format_name;
-
-	num_formats = length / 36;
-
-	if (num_formats <= 0)
-	{
-		cliprdr->format_names = NULL;
-		cliprdr->num_format_names = 0;
-		return;
-	}
-
-	if (num_formats * 36 != length)
-		WLog_ERR(TAG, "dataLen %d not divided by 36!", length);
-
-	ascii = (flags & CB_ASCII_NAMES) ? TRUE : FALSE;
-
-	cliprdr->format_names = (CLIPRDR_FORMAT_NAME*) malloc(sizeof(CLIPRDR_FORMAT_NAME) * num_formats);
-	cliprdr->num_format_names = num_formats;
-
-	for (i = 0; i < num_formats; i++)
-	{
-		format_name = &cliprdr->format_names[i];
-
-		Stream_Read_UINT32(s, format_name->id);
-
-		if (ascii)
-		{
-			format_name->name = _strdup((char*) s->pointer);
-			format_name->length = strlen(format_name->name);
-		}
-		else
-		{
-			format_name->name = NULL;
-			format_name->length = ConvertFromUnicode(CP_UTF8, 0, (WCHAR*) s->pointer, 32 / 2, &format_name->name, 0, NULL, NULL);
-		}
-
-		Stream_Seek(s, 32);
-	}
-}
-
-void cliprdr_process_long_format_names(cliprdrPlugin* cliprdr, wStream* s, UINT32 length, UINT16 flags)
-{
-	int allocated_formats = 8;
-	BYTE* end_mark;
-	CLIPRDR_FORMAT_NAME* format_name;
-	
-	Stream_GetPointer(s, end_mark);
-	end_mark += length;
-		
-	cliprdr->format_names = (CLIPRDR_FORMAT_NAME*) malloc(sizeof(CLIPRDR_FORMAT_NAME) * allocated_formats);
-	cliprdr->num_format_names = 0;
-
-	while (Stream_GetRemainingLength(s) >= 6)
-	{
-		BYTE* p;
-		int name_len;
-		
-		if (cliprdr->num_format_names >= allocated_formats)
-		{
-			allocated_formats *= 2;
-			cliprdr->format_names = (CLIPRDR_FORMAT_NAME*) realloc(cliprdr->format_names,
-					sizeof(CLIPRDR_FORMAT_NAME) * allocated_formats);
-		}
-		
-		format_name = &cliprdr->format_names[cliprdr->num_format_names++];
-		Stream_Read_UINT32(s, format_name->id);
-		
-		format_name->name = NULL;
-		format_name->length = 0;
-
-		for (p = Stream_Pointer(s), name_len = 0; p + 1 < end_mark; p += 2, name_len += 2)
-		{
-			if (*((unsigned short*) p) == 0)
-				break;
-		}
-		
-		format_name->length = ConvertFromUnicode(CP_UTF8, 0, (WCHAR*) Stream_Pointer(s), name_len / 2, &format_name->name, 0, NULL, NULL);
-
-		Stream_Seek(s, name_len + 2);
-	}
-}
-
-void cliprdr_process_format_list(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
-{
+	UINT32 index;
+	UINT32 position;
+	BOOL asciiNames;
+	int formatNameLength;
+	char* szFormatName;
+	WCHAR* wszFormatName;
+	CLIPRDR_FORMAT* formats = NULL;
+	CLIPRDR_FORMAT_LIST formatList;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
+	UINT error = CHANNEL_RC_OK;
 
-	if (context->custom)
+	if (!context->custom)
 	{
-		UINT32 index;
-		int formatNameLength;
-		CLIPRDR_FORMAT* formats;
-		CLIPRDR_FORMAT_LIST formatList;
+		WLog_ERR(TAG, "context->custom not set!");
+		return ERROR_INTERNAL_ERROR;
+	}
 
-		formatList.msgType = CB_FORMAT_LIST;
-		formatList.msgFlags = msgFlags;
-		formatList.dataLen = dataLen;
+	asciiNames = (msgFlags & CB_ASCII_NAMES) ? TRUE : FALSE;
 
+	formatList.msgType = CB_FORMAT_LIST;
+	formatList.msgFlags = msgFlags;
+	formatList.dataLen = dataLen;
+
+	index = 0;
+	formatList.numFormats = 0;
+	position = Stream_GetPosition(s);
+
+	if (!formatList.dataLen)
+	{
+		/* empty format list */
+		formatList.formats = NULL;
 		formatList.numFormats = 0;
+	}
+	else if (!cliprdr->useLongFormatNames)
+	{
+		formatList.numFormats = (dataLen / 36);
 
-		while (dataLen)
+		if ((formatList.numFormats * 36) != dataLen)
 		{
-			Stream_Seek(s, 4); /* formatId */
-			dataLen -= 4;
-
-			formatNameLength = _wcslen((WCHAR*) Stream_Pointer(s));
-			Stream_Seek(s, (formatNameLength + 1) * 2);
-			dataLen -= ((formatNameLength + 1) * 2);
-			formatList.numFormats++;
+			WLog_ERR(TAG, "Invalid short format list length: %d", dataLen);
+			return ERROR_INTERNAL_ERROR;
 		}
 
-		index = 0;
-		dataLen = formatList.dataLen;
-		Stream_Rewind(s, dataLen);
+		if (formatList.numFormats)
+			formats = (CLIPRDR_FORMAT*) calloc(formatList.numFormats, sizeof(CLIPRDR_FORMAT));
 
-		formats = (CLIPRDR_FORMAT*) malloc(sizeof(CLIPRDR_FORMAT) * formatList.numFormats);
+		if (!formats)
+		{
+			WLog_ERR(TAG, "calloc failed!");
+			return CHANNEL_RC_NO_MEMORY;
+		}
+
 		formatList.formats = formats;
 
 		while (dataLen)
 		{
-			Stream_Read_UINT32(s, formats[index].formatId); /* formatId */
+			Stream_Read_UINT32(s, formats[index].formatId); /* formatId (4 bytes) */
 			dataLen -= 4;
 
 			formats[index].formatName = NULL;
-			formatNameLength = _wcslen((WCHAR*) Stream_Pointer(s));
 
-			if (formatNameLength)
+			/* According to MS-RDPECLIP 2.2.3.1.1.1 formatName is "a 32-byte block containing
+			 * the *null-terminated* name assigned to the Clipboard Format: (32 ASCII 8 characters
+			 * or 16 Unicode characters)"
+			 * However, both Windows RDSH and mstsc violate this specs as seen in the following
+			 * example of a transferred short format name string: [R.i.c.h. .T.e.x.t. .F.o.r.m.a.t.]
+			 * These are 16 unicode charaters - *without* terminating null !
+			 */
+
+			if (asciiNames)
 			{
-				formatNameLength = ConvertFromUnicode(CP_UTF8, 0, (WCHAR*) Stream_Pointer(s),
-					-1, &(formats[index].formatName), 0, NULL, NULL);
+				szFormatName = (char*) Stream_Pointer(s);
 
-				Stream_Seek(s, formatNameLength * 2);
-				dataLen -= (formatNameLength * 2);
+				if (szFormatName[0])
+				{
+					/* ensure null termination */
+					formats[index].formatName = (char*) malloc(32 + 1);
+					if (!formats[index].formatName)
+					{
+						WLog_ERR(TAG, "malloc failed!");
+						error = CHANNEL_RC_NO_MEMORY;
+						goto error_out;
+					}
+					CopyMemory(formats[index].formatName, szFormatName, 32);
+					formats[index].formatName[32] = '\0';
+				}
 			}
 			else
 			{
-				Stream_Seek(s, 2);
-				dataLen -= 2;
+				wszFormatName = (WCHAR*) Stream_Pointer(s);
+
+				if (wszFormatName[0])
+				{
+					/* ConvertFromUnicode always returns a null-terminated
+					 * string on success, even if the source string isn't.
+					 */
+					if (ConvertFromUnicode(CP_UTF8, 0, wszFormatName, 16,
+						&(formats[index].formatName), 0, NULL, NULL) < 1)
+					{
+						WLog_ERR(TAG, "failed to convert short clipboard format name");
+						error = ERROR_INTERNAL_ERROR;
+						goto error_out;
+					}
+				}
 			}
+
+			Stream_Seek(s, 32);
+			dataLen -= 32;
+			index++;
+		}
+	}
+	else
+	{
+		while (dataLen)
+		{
+			Stream_Seek(s, 4); /* formatId (4 bytes) */
+			dataLen -= 4;
+
+			wszFormatName = (WCHAR*) Stream_Pointer(s);
+
+			if (!wszFormatName[0])
+				formatNameLength = 0;
+			else
+				formatNameLength = _wcslen(wszFormatName);
+
+			Stream_Seek(s, (formatNameLength + 1) * 2);
+			dataLen -= ((formatNameLength + 1) * 2);
+
+			formatList.numFormats++;
+		}
+
+		dataLen = formatList.dataLen;
+		Stream_SetPosition(s, position);
+
+		if (formatList.numFormats)
+			formats = (CLIPRDR_FORMAT*) calloc(formatList.numFormats, sizeof(CLIPRDR_FORMAT));
+
+		if (!formats)
+		{
+			WLog_ERR(TAG, "calloc failed!");
+			return CHANNEL_RC_NO_MEMORY;
+		}
+
+		formatList.formats = formats;
+
+		while (dataLen)
+		{
+			Stream_Read_UINT32(s, formats[index].formatId); /* formatId (4 bytes) */
+			dataLen -= 4;
+
+			formats[index].formatName = NULL;
+
+			wszFormatName = (WCHAR*) Stream_Pointer(s);
+
+			if (!wszFormatName[0])
+				formatNameLength = 0;
+			else
+				formatNameLength = _wcslen(wszFormatName);
+
+			if (formatNameLength)
+			{
+				if (ConvertFromUnicode(CP_UTF8, 0, wszFormatName, -1,
+					&(formats[index].formatName), 0, NULL, NULL) < 1)
+				{
+					WLog_ERR(TAG, "failed to convert long clipboard format name");
+					error = ERROR_INTERNAL_ERROR;
+					goto error_out;
+				}
+			}
+
+			Stream_Seek(s, (formatNameLength + 1) * 2);
+			dataLen -= ((formatNameLength + 1) * 2);
 
 			index++;
 		}
+	}
 
-		WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatList: numFormats: %d",
-				formatList.numFormats);
+	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatList: numFormats: %d",
+			formatList.numFormats);
 
-		if (context->ServerFormatList)
-			context->ServerFormatList(context, &formatList);
+	if (context->ServerFormatList)
+	{
+		if ((error = context->ServerFormatList(context, &formatList)))
+			WLog_ERR(TAG, "ServerFormatList failed with error %d", error);
+	}
 
+error_out:
+	if (formats)
+	{
 		for (index = 0; index < formatList.numFormats; index++)
+		{
 			free(formats[index].formatName);
+		}
 
 		free(formats);
 	}
+	return error;
 }
 
-void cliprdr_process_format_list_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+UINT cliprdr_process_format_list_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
 {
+	CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
+	UINT error = CHANNEL_RC_OK;
 
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatListResponse");
 
-	if (context->custom)
+	if (!context->custom)
 	{
-		CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse;
-
-		formatListResponse.msgType = CB_FORMAT_LIST_RESPONSE;
-		formatListResponse.msgFlags = msgFlags;
-		formatListResponse.dataLen = dataLen;
-
-		if (context->ServerFormatListResponse)
-			context->ServerFormatListResponse(context, &formatListResponse);
+		WLog_ERR(TAG, "context->custom not set!");
+		return ERROR_INTERNAL_ERROR;
 	}
+
+	formatListResponse.msgType = CB_FORMAT_LIST_RESPONSE;
+	formatListResponse.msgFlags = msgFlags;
+	formatListResponse.dataLen = dataLen;
+
+	IFCALLRET(context->ServerFormatListResponse, error, context, &formatListResponse);
+	if (error)
+		WLog_ERR(TAG, "ServerFormatListResponse failed with error %lu!", error);
+
+	return error;
 }
 
-void cliprdr_process_format_data_request(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+UINT cliprdr_process_format_data_request(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
 {
+	CLIPRDR_FORMAT_DATA_REQUEST formatDataRequest;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
+	UINT error = CHANNEL_RC_OK;
 
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatDataRequest");
 
-	if (context->custom)
+	if (!context->custom)
 	{
-		CLIPRDR_FORMAT_DATA_REQUEST formatDataRequest;
-
-		formatDataRequest.msgType = CB_FORMAT_DATA_REQUEST;
-		formatDataRequest.msgFlags = msgFlags;
-		formatDataRequest.dataLen = dataLen;
-
-		Stream_Read_UINT32(s, formatDataRequest.requestedFormatId); /* requestedFormatId (4 bytes) */
-
-		if (context->ServerFormatDataRequest)
-			context->ServerFormatDataRequest(context, &formatDataRequest);
+		WLog_ERR(TAG, "context->custom not set!");
+		return ERROR_INTERNAL_ERROR;
 	}
+
+	formatDataRequest.msgType = CB_FORMAT_DATA_REQUEST;
+	formatDataRequest.msgFlags = msgFlags;
+	formatDataRequest.dataLen = dataLen;
+
+	Stream_Read_UINT32(s, formatDataRequest.requestedFormatId); /* requestedFormatId (4 bytes) */
+
+
+	IFCALLRET(context->ServerFormatDataRequest, error, context, &formatDataRequest);
+	if (error)
+		WLog_ERR(TAG, "ServerFormatDataRequest failed with error %lu!", error);
+
+	return error;
 }
 
-void cliprdr_process_format_data_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+UINT cliprdr_process_format_data_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen, UINT16 msgFlags)
 {
+	CLIPRDR_FORMAT_DATA_RESPONSE formatDataResponse;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
-	
+	UINT error = CHANNEL_RC_OK;
+
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatDataResponse");
 
-	if (context->custom)
+	if (!context->custom)
 	{
-		CLIPRDR_FORMAT_DATA_RESPONSE formatDataResponse;
-		
-		formatDataResponse.msgType = CB_FORMAT_DATA_RESPONSE;
-		formatDataResponse.msgFlags = msgFlags;
-		formatDataResponse.dataLen = dataLen;
-		formatDataResponse.requestedFormatData = NULL;
-		
-		if (dataLen)
-		{
-			formatDataResponse.requestedFormatData = (BYTE*) malloc(dataLen);
-			Stream_Read(s, formatDataResponse.requestedFormatData, dataLen);
-		}
-		
-		if (context->ServerFormatDataResponse)
-			context->ServerFormatDataResponse(context, &formatDataResponse);
-		
-		free(formatDataResponse.requestedFormatData);
+		WLog_ERR(TAG, "context->custom not set!");
+		return ERROR_INTERNAL_ERROR;
 	}
+
+	formatDataResponse.msgType = CB_FORMAT_DATA_RESPONSE;
+	formatDataResponse.msgFlags = msgFlags;
+	formatDataResponse.dataLen = dataLen;
+	formatDataResponse.requestedFormatData = NULL;
+
+	if (dataLen)
+		formatDataResponse.requestedFormatData = (BYTE*) Stream_Pointer(s);
+
+	IFCALLRET(context->ServerFormatDataResponse, error, context, &formatDataResponse);
+	if (error)
+		WLog_ERR(TAG, "ServerFormatDataResponse failed with error %lu!", error);
+
+	return error;
 }

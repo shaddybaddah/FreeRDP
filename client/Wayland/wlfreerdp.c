@@ -1,6 +1,6 @@
 /**
  * FreeRDP: A Remote Desktop Protocol Implementation
- * Wayland Client Interface
+ * Wayland Client
  *
  * Copyright 2014 Manuel Bachmann <tarnyko@tarnyko.net>
  *
@@ -19,400 +19,319 @@
 
 #include <stdio.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/mman.h>
 
-#include <freerdp/freerdp.h>
 #include <freerdp/client/cmdline.h>
 #include <freerdp/channels/channels.h>
 #include <freerdp/gdi/gdi.h>
+#include <linux/input.h>
 
-#include <wayland-client.h>
+#include "wlfreerdp.h"
+#include "wlf_input.h"
 
-struct display
+UwacDisplay *g_display;
+HANDLE g_displayHandle;
+
+static BOOL wl_context_new(freerdp* instance, rdpContext* context)
 {
-	struct wl_display* display;
-	struct wl_registry* registry;
-	struct wl_compositor* compositor;
-	struct wl_shell* shell;
-	struct wl_shm* shm;
-};
+	if (!(context->channels = freerdp_channels_new()))
+		return FALSE;
 
-struct buffer
-{
-	struct wl_buffer* buffer;
-	void* shm_data;
-	int busy;
-};
-
-struct window
-{
-	int width, height;
-	struct wl_surface* surface;
-	struct wl_shell_surface* shell_surface;
-	struct wl_callback* callback;
-	struct buffer buffers[2];
-	struct display* display;
-	void* data;
-};
-
-struct wl_context
-{
-	rdpContext _p;
-	struct display* display;
-	struct window* window;
-};
-
-static void wl_buffer_release(void* data, struct wl_buffer* wl_buffer)
-{
-	struct buffer* buffer = data;
-
-	buffer->busy = 0;
+	return TRUE;
 }
 
-static const struct wl_buffer_listener wl_buffer_listener =
+static void wl_context_free(freerdp* instance, rdpContext* context)
 {
-	wl_buffer_release
-};
-
-static void window_redraw(void* data, struct wl_callback* callback, uint32_t time);
-static const struct wl_callback_listener wl_callback_listener = 
-{
-	window_redraw
-};
-
-static void window_redraw(void* data, struct wl_callback* callback, uint32_t time)
-{
-	struct window* window = data;
-	struct wl_shm_pool* shm_pool;
-	struct buffer* buffer;
-	int fd;
-	int fdt;
-
-	if (!window->buffers[0].busy)
-		buffer = &window->buffers[0];
-	else if (!window->buffers[1].busy)
-		buffer = &window->buffers[1];
-	else
-		return;
-
-	fd = shm_open("wlfreerdp_shm", O_CREAT | O_TRUNC | O_RDWR, 0666);
-	fdt = ftruncate(fd, window->width * window->height * 4);
-	if (fdt != 0)
+	if (context && context->channels)
 	{
-		fprintf(stderr, "window_redraw: could not allocate memory\n");
-		close(fd);
-		return;
+		freerdp_channels_close(context->channels, instance);
+		freerdp_channels_free(context->channels);
+		context->channels = NULL;
+	}
+}
+
+BOOL wl_update_content(wlfContext *context_w)
+{
+	if (!context_w->waitingFrameDone && context_w->haveDamage)
+	{
+		UwacWindowSubmitBuffer(context_w->window, true);
+		context_w->waitingFrameDone = TRUE;
+		context_w->haveDamage = FALSE;
 	}
 
-	buffer->shm_data = mmap(0, window->width * window->height * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (buffer->shm_data == MAP_FAILED)
-	{
-		fprintf(stderr, "window_redraw: failed to memory map buffer\n");
-		close(fd);
-		return;
-	}
-
-	shm_pool = wl_shm_create_pool(window->display->shm, fd, window->width * window->height * 4);
-	buffer->buffer = wl_shm_pool_create_buffer(shm_pool, 0, window->width, window->height, window->width* 4, WL_SHM_FORMAT_XRGB8888);
-	wl_buffer_add_listener(buffer->buffer, &wl_buffer_listener, buffer);
-	wl_shm_pool_destroy(shm_pool);
-	shm_unlink("wlfreerdp_shm");
-	close(fd);
-
-	 /* this is the real surface data */
-	memcpy(buffer->shm_data, (void*) window->data, window->width * window->height * 4);
-	wl_surface_attach(window->surface, buffer->buffer, 0, 0);
-	wl_surface_damage(window->surface, 0, 0, window->width, window->height);
-
-	if (callback) wl_callback_destroy(callback);
-	window->callback = wl_surface_frame(window->surface);
-	wl_callback_add_listener(window->callback, &wl_callback_listener, window);
-	wl_surface_commit(window->surface);
-
-	buffer->busy = 1;
-	munmap(buffer->shm_data, window->width * window->height * 4);
+	return TRUE;
 }
 
-static void wl_shell_surface_handle_ping(void* data, struct wl_shell_surface* shell_surface, uint32_t serial)
-{
-	wl_shell_surface_pong(shell_surface, serial);
-}
-
-static const struct wl_shell_surface_listener wl_shell_surface_listener =
-{
-	wl_shell_surface_handle_ping
-};
-
-static void wl_registry_handle_global(void* data, struct wl_registry* registry, uint32_t id, const char *interface, uint32_t version)
-{
-	struct display* display = data;
-
-	if (strcmp(interface, "wl_compositor") == 0)
-		display->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, 1);
-	else if (strcmp(interface, "wl_shell") == 0)
-		display->shell = wl_registry_bind(registry, id, &wl_shell_interface, 1);
-	else if (strcmp(interface, "wl_shm") == 0)
-		display->shm = wl_registry_bind(registry, id, &wl_shm_interface, 1);
-}
-
-static void wl_registry_handle_global_remove(void* data, struct wl_registry* registry, uint32_t name)
-{
-
-}
-
-static const struct wl_registry_listener wl_registry_listener =
-{
-	wl_registry_handle_global,
-	wl_registry_handle_global_remove
-};
-
-int wl_context_new(freerdp* instance, rdpContext* context)
-{
-	context->channels = freerdp_channels_new();
-
-	return 0;
-}
-
-void wl_context_free(freerdp* instance, rdpContext* context)
-{
-
-}
-
-void wl_begin_paint(rdpContext* context)
+static BOOL wl_begin_paint(rdpContext* context)
 {
 	rdpGdi* gdi;
 
 	gdi = context->gdi;
 	gdi->primary->hdc->hwnd->invalid->null = 1;
+	return TRUE;
 }
 
-void wl_end_paint(rdpContext* context)
+
+static BOOL wl_end_paint(rdpContext* context)
 {
 	rdpGdi* gdi;
-	struct display* display;
-	struct window* window;
-	struct wl_context* context_w;
+	char *data;
+	wlfContext *context_w;
+	INT32 x, y;
+	UINT32 w, h;
+	int i;
 
 	gdi = context->gdi;
 	if (gdi->primary->hdc->hwnd->invalid->null)
-		return;
+		return TRUE;
 
-	context_w = (struct wl_context*) context;
-	display = context_w->display;
-	window = context_w->window;
+	x = gdi->primary->hdc->hwnd->invalid->x;
+	y = gdi->primary->hdc->hwnd->invalid->y;
+	w = gdi->primary->hdc->hwnd->invalid->w;
+	h = gdi->primary->hdc->hwnd->invalid->h;
 
-	realloc(window->data, gdi->width * gdi->height * 4);
-	memcpy(window->data, (void*) gdi->primary_buffer, gdi->width * gdi->height * 4);
-	wl_display_dispatch(display->display);
+	context_w = (wlfContext*) context;
+
+	data = UwacWindowGetDrawingBuffer(context_w->window);
+	if (!data)
+		return FALSE;
+
+	for (i = 0; i < h; i++)
+	{
+		memcpy(data + ((i+y)*(gdi->width*4)) + x*4,
+		       gdi->primary_buffer + ((i+y)*(gdi->width*4)) + x*4,
+		       w*4);
+	}
+
+	if (UwacWindowAddDamage(context_w->window, x, y, w, h) != UWAC_SUCCESS)
+		return FALSE;
+
+	context_w->haveDamage = TRUE;
+	return wl_update_content(context_w);
 }
 
-BOOL wl_pre_connect(freerdp* instance)
+
+static BOOL wl_pre_connect(freerdp* instance)
 {
-	struct display* display;
-	struct wl_context* context;
+	wlfContext* context;
 
-	freerdp_channels_pre_connect(instance->context->channels, instance);
-
-	display = malloc(sizeof(*display));
-	display->display = wl_display_connect(NULL);
-
-	if (!display->display)
-	{
-		fprintf(stderr, "wl_pre_connect: failed to connect to Wayland compositor\n");
-		fprintf(stderr, "Please check that the XDG_RUNTIME_DIR environment variable is properly set.\n");
-		free(display);
+	if (freerdp_channels_pre_connect(instance->context->channels, instance) != CHANNEL_RC_OK)
 		return FALSE;
-	}
 
-	display->registry = wl_display_get_registry(display->display);
-	wl_registry_add_listener(display->registry, &wl_registry_listener, display);
-	wl_display_roundtrip(display->display);
-
-	if (!display->compositor || !display->shell || !display->shm)
-	{
-		fprintf(stderr, "wl_pre_connect: failed to find needed compositor interfaces\n");
-		free(display);
+	context = (wlfContext*) instance->context;
+	if (!context)
 		return FALSE;
-	}
 
-	 /* put Wayland data in the context here */
-	context = (struct wl_context*) instance->context;
-	context->display = display;
+	context->display = g_display;
 
 	return TRUE;
 }
 
-BOOL wl_post_connect(freerdp* instance)
+static BOOL wl_post_connect(freerdp* instance)
 {
-	struct window* window;
-	struct wl_context* context;
-
-	context = (struct wl_context*) instance->context;
-
-	window = malloc(sizeof(*window));
-	window->width = instance->settings->DesktopWidth;
-	window->height = instance->settings->DesktopHeight;
-	window->buffers[0].busy = 0;
-	window->buffers[1].busy = 0;
-	window->callback = NULL;
-	window->display = context->display;
-	window->surface = wl_compositor_create_surface(window->display->compositor);
-	window->shell_surface = wl_shell_get_shell_surface(window->display->shell, window->surface);
-
-	wl_shell_surface_add_listener(window->shell_surface, &wl_shell_surface_listener, NULL);
-	wl_shell_surface_set_title(window->shell_surface, "FreeRDP");
-	wl_shell_surface_set_toplevel(window->shell_surface);
-	wl_surface_damage(window->surface, 0, 0, window->width, window->height);
-
-	 /* GC/GDI logic here */
 	rdpGdi* gdi;
+	UwacWindow* window;
+	wlfContext* context;
 
-	gdi_init(instance, CLRCONV_ALPHA | CLRCONV_INVERT | CLRBUF_32BPP, NULL);
+	if (!gdi_init(instance, CLRCONV_ALPHA | CLRBUF_32BPP, NULL))
+		return FALSE;
+
 	gdi = instance->context->gdi;
+	if (!gdi)
+		return FALSE;
 
-	 /* fill buffer with first image here */
-	window->data = malloc (gdi->width * gdi->height *4);
-	memcpy(window->data, (void*) gdi->primary_buffer, gdi->width * gdi->height * 4);
+	context = (wlfContext*) instance->context;
+	context->window = window = UwacCreateWindowShm(context->display, gdi->width, gdi->height, WL_SHM_FORMAT_XRGB8888);
+	if (!window)
+		return FALSE;
+
+	UwacWindowSetTitle(window, "FreeRDP");
+
 	instance->update->BeginPaint = wl_begin_paint;
 	instance->update->EndPaint = wl_end_paint;
 
-	 /* put Wayland data in the context here */
-	context->window = window;
+	if (freerdp_channels_post_connect(instance->context->channels, instance) != CHANNEL_RC_OK)
+		return FALSE;
 
-	freerdp_channels_post_connect(instance->context->channels, instance);
 
-	window_redraw(window, NULL, 0);
-
-	return TRUE;
+	memcpy(UwacWindowGetDrawingBuffer(context->window), gdi->primary_buffer, gdi->width * gdi->height * 4);
+	UwacWindowAddDamage(context->window, 0, 0, gdi->width, gdi->height);
+	context->haveDamage = TRUE;
+	return wl_update_content(context);
 }
 
-int wlfreerdp_run(freerdp* instance)
+static void wl_post_disconnect(freerdp* instance)
 {
-	int i;
-	int fds;
-	int max_fds;
-	int rcount;
-	int wcount;
-	void* rfds[32];
-	void* wfds[32];
-	fd_set rfds_set;
-	fd_set wfds_set;
+	wlfContext *context;
+	if (!instance)
+		return;
 
-	ZeroMemory(rfds, sizeof(rfds));
-	ZeroMemory(wfds, sizeof(wfds));
+	if (!instance->context)
+		return;
 
-	freerdp_connect(instance);
+	context = (wlfContext*) instance->context;
 
-	while (1)
+	gdi_free(instance);
+	if (context->window)
+		UwacDestroyWindow(&context->window);
+
+	if (context->display)
+		UwacCloseDisplay(&context->display);
+
+}
+
+static BOOL handle_uwac_events(freerdp* instance, UwacDisplay *display) {
+	UwacEvent event;
+	wlfContext *context;
+
+	if (UwacDisplayDispatch(display, 1) < 0)
+		return FALSE;
+
+	while (UwacHasEvent(display))
 	{
-		rcount = 0;
-		wcount = 0;
-		if (freerdp_get_fds(instance, rfds, &rcount, wfds, &wcount) != TRUE)
-		{
-			printf("Failed to get FreeRDP file descriptor");
+		if (UwacNextEvent(display, &event) != UWAC_SUCCESS)
+			return FALSE;
+
+		/*printf("UWAC event type %d\n", event.type);*/
+		switch (event.type) {
+		case UWAC_EVENT_FRAME_DONE:
+			if (!instance)
+				continue;
+
+			context = (wlfContext *)instance->context;
+			context->waitingFrameDone = FALSE;
+			if (context->haveDamage && !wl_end_paint(instance->context))
+				return FALSE;
 			break;
-		}
-		if (freerdp_channels_get_fds(instance->context->channels, instance, rfds, &rcount, wfds, &wcount) != TRUE)
-		{
-			printf("Failed to get FreeRDP file descriptor");
+		case UWAC_EVENT_POINTER_ENTER:
+			if (!wlf_handle_pointer_enter(instance, &event.mouse_enter_leave))
+				return FALSE;
 			break;
-		}
-
-		max_fds = 0;
-		FD_ZERO(&rfds_set);
-		FD_ZERO(&wfds_set);
-
-		for (i = 0; i < rcount; i++)
-		{
-			fds = (int)(long)(rfds[i]);
-
-			if (fds > max_fds)
-				max_fds = fds;
-
-			FD_SET(fds, &rfds_set);
-		}
-
-		if (max_fds == 0)
+		case UWAC_EVENT_POINTER_MOTION:
+			if (!wlf_handle_pointer_motion(instance, &event.mouse_motion))
+				return FALSE;
 			break;
-
-		if (select(max_fds + 1, &rfds_set, &wfds_set, NULL, NULL) == -1)
-		{
-			if (!((errno == EAGAIN) ||
-				(errno == EWOULDBLOCK) ||
-				(errno == EINPROGRESS) ||
-				(errno == EINTR)))
-			{
-				printf("wlfreerdp_run: select failed\n");
-				break;
-			}
-		}
-
-		if (freerdp_check_fds(instance) != TRUE)
-		{
-			printf("Failed to check FreeRDP file descriptor\n");
+		case UWAC_EVENT_POINTER_BUTTONS:
+			if (!wlf_handle_pointer_buttons(instance, &event.mouse_button))
+				return FALSE;
 			break;
-		}
-		if (freerdp_channels_check_fds(instance->context->channels, instance) != TRUE)
-		{
-			printf("Failed to check channel manager file descriptor\n");
+		case UWAC_EVENT_POINTER_AXIS:
+			if (!wlf_handle_pointer_axis(instance, &event.mouse_axis))
+				return FALSE;
+			break;
+		case UWAC_EVENT_KEY:
+			if (!wlf_handle_key(instance, &event.key))
+				return FALSE;
+			break;
+		case UWAC_EVENT_KEYBOARD_ENTER:
+			if (!wlf_keyboard_enter(instance, &event.keyboard_enter_leave))
+				return FALSE;
+			break;
+		default:
 			break;
 		}
 	}
+	return TRUE;
+}
 
-	struct display* display;
-	struct window* window;
-	struct wl_context* context;
+static int wlfreerdp_run(freerdp* instance)
+{
+	DWORD count;
+	HANDLE handles[64];
+	DWORD status;
 
-	context = (struct wl_context*) instance->context;
-	display = context->display;
-	window = context->window;
-	free(window->buffers[0].shm_data);
-	free(window->buffers[1].shm_data);
-	free(window->data);
+	if (!freerdp_connect(instance))
+	{
+			printf("Failed to connect\n");
+			return -1;
+	}
 
-	wl_buffer_destroy(window->buffers[0].buffer);
-	wl_buffer_destroy(window->buffers[1].buffer);
-	wl_shell_surface_destroy(window->shell_surface);
-	wl_surface_destroy(window->surface);
-	wl_shm_destroy(display->shm);
-	wl_shell_destroy(display->shell);
-	wl_compositor_destroy(display->compositor);
-	wl_registry_destroy(display->registry);
-	wl_display_disconnect(display->display);
+	handle_uwac_events(instance, g_display);
 
-	freerdp_channels_close(instance->context->channels, instance);
-	freerdp_channels_free(instance->context->channels);
-	freerdp_free(instance);
+	while (!freerdp_shall_disconnect(instance))
+	{
+		handles[0] = g_displayHandle;
+
+		count = freerdp_get_event_handles(instance->context, &handles[1], 63);
+		if (!count)
+		{
+			printf("Failed to get FreeRDP file descriptor\n");
+			break;
+		}
+
+		status = WaitForMultipleObjects(count+1, handles, FALSE, INFINITE);
+		if (WAIT_FAILED == status)
+		{
+			printf("%s: WaitForMultipleObjects failed\n", __FUNCTION__);
+			break;
+		}
+
+		if (!handle_uwac_events(instance, g_display)) {
+			printf("error handling UWAC events\n");
+			break;
+		}
+
+		//if (WaitForMultipleObjects(count, &handles[1], FALSE, INFINITE)) {
+			if (freerdp_check_event_handles(instance->context) != TRUE)
+			{
+				printf("Failed to check FreeRDP file descriptor\n");
+				break;
+			}
+		//}
+
+	}
+
+	freerdp_channels_disconnect(instance->context->channels, instance);
+	freerdp_disconnect(instance);
 
 	return 0;
 }
 
 int main(int argc, char* argv[])
 {
-	int status;
+	UwacReturnCode status;
 	freerdp* instance;
+
+	g_display = UwacOpenDisplay(NULL, &status);
+	if (!g_display)
+		exit(1);
+
+	g_displayHandle = CreateFileDescriptorEvent(NULL, FALSE, FALSE, UwacDisplayGetFd(g_display), WINPR_FD_READ);
+	if (!g_displayHandle)
+		exit(1);
+
+	//if (!handle_uwac_events(NULL, g_display))
+	//	exit(1);
 
 	instance = freerdp_new();
 	instance->PreConnect = wl_pre_connect;
 	instance->PostConnect = wl_post_connect;
+	instance->PostDisconnect = wl_post_disconnect;
+	instance->Authenticate = client_cli_authenticate;
+	instance->GatewayAuthenticate = client_cli_gw_authenticate;
+	instance->VerifyCertificate = client_cli_verify_certificate;
+	instance->VerifyChangedCertificate = client_cli_verify_changed_certificate;
 
-	instance->ContextSize = sizeof(struct wl_context);
+	instance->ContextSize = sizeof(wlfContext);
 	instance->ContextNew = wl_context_new;
 	instance->ContextFree = wl_context_free;
+
 	freerdp_context_new(instance);
 
-	status = freerdp_client_settings_parse_command_line_arguments(instance->settings, argc, argv);
+	status = freerdp_client_settings_parse_command_line(instance->settings, argc, argv, FALSE);
 
 	status = freerdp_client_settings_command_line_status_print(instance->settings, status, argc, argv);
 
 	if (status)
 		exit(0);
 
-	freerdp_client_load_addins(instance->context->channels, instance->settings);
+	if (!freerdp_client_load_addins(instance->context->channels, instance->settings))
+		exit(-1);
 
 	wlfreerdp_run(instance);
+
+	freerdp_context_free(instance);
+
+	freerdp_free(instance);
 
 	return 0;
 }

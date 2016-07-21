@@ -25,10 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef HAVE_STDINT_H
-#include <stdint.h>
-#endif
-
 #include <winpr/crt.h>
 
 #include <freerdp/codec/nsc.h>
@@ -493,7 +489,8 @@ int nsc_write_message(NSC_CONTEXT* context, wStream* s, NSC_MESSAGE* message)
 	totalPlaneByteCount = message->LumaPlaneByteCount + message->OrangeChromaPlaneByteCount +
 			message->GreenChromaPlaneByteCount + message->AlphaPlaneByteCount;
 
-	Stream_EnsureRemainingCapacity(s, 20 + totalPlaneByteCount);
+	if (!Stream_EnsureRemainingCapacity(s, 20 + totalPlaneByteCount))
+		return -1;
 	Stream_Write_UINT32(s, message->LumaPlaneByteCount); /* LumaPlaneByteCount (4 bytes) */
 	Stream_Write_UINT32(s, message->OrangeChromaPlaneByteCount); /* OrangeChromaPlaneByteCount (4 bytes) */
 	Stream_Write_UINT32(s, message->GreenChromaPlaneByteCount); /* GreenChromaPlaneByteCount (4 bytes) */

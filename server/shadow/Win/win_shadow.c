@@ -24,21 +24,16 @@
 #include <freerdp/codec/color.h>
 #include <freerdp/codec/region.h>
 
-#include "../shadow_screen.h"
-#include "../shadow_surface.h"
-#include "../shadow_capture.h"
-#include "../shadow_subsystem.h"
-
 #include "win_shadow.h"
 
 #define TAG SERVER_TAG("shadow.win")
 
-void win_shadow_input_synchronize_event(winShadowSubsystem* subsystem, UINT32 flags)
+void win_shadow_input_synchronize_event(winShadowSubsystem* subsystem, rdpShadowClient* client, UINT32 flags)
 {
 
 }
 
-void win_shadow_input_keyboard_event(winShadowSubsystem* subsystem, UINT16 flags, UINT16 code)
+void win_shadow_input_keyboard_event(winShadowSubsystem* subsystem, rdpShadowClient* client, UINT16 flags, UINT16 code)
 {
 	INPUT event;
 
@@ -58,7 +53,7 @@ void win_shadow_input_keyboard_event(winShadowSubsystem* subsystem, UINT16 flags
 	SendInput(1, &event, sizeof(INPUT));
 }
 
-void win_shadow_input_unicode_keyboard_event(winShadowSubsystem* subsystem, UINT16 flags, UINT16 code)
+void win_shadow_input_unicode_keyboard_event(winShadowSubsystem* subsystem, rdpShadowClient* client, UINT16 flags, UINT16 code)
 {
 	INPUT event;
 
@@ -75,7 +70,7 @@ void win_shadow_input_unicode_keyboard_event(winShadowSubsystem* subsystem, UINT
 	SendInput(1, &event, sizeof(INPUT));
 }
 
-void win_shadow_input_mouse_event(winShadowSubsystem* subsystem, UINT16 flags, UINT16 x, UINT16 y)
+void win_shadow_input_mouse_event(winShadowSubsystem* subsystem, rdpShadowClient* client, UINT16 flags, UINT16 x, UINT16 y)
 {
 	INPUT event;
 	float width;
@@ -142,7 +137,7 @@ void win_shadow_input_mouse_event(winShadowSubsystem* subsystem, UINT16 flags, U
 	}
 }
 
-void win_shadow_input_extended_mouse_event(winShadowSubsystem* subsystem, UINT16 flags, UINT16 x, UINT16 y)
+void win_shadow_input_extended_mouse_event(winShadowSubsystem* subsystem, rdpShadowClient* client, UINT16 flags, UINT16 x, UINT16 y)
 {
 	INPUT event;
 	float width;
@@ -186,20 +181,20 @@ void win_shadow_input_extended_mouse_event(winShadowSubsystem* subsystem, UINT16
 int win_shadow_invalidate_region(winShadowSubsystem* subsystem, int x, int y, int width, int height)
 {
 	rdpShadowServer* server;
-	rdpShadowScreen* screen;
+	rdpShadowSurface* surface;
 	RECTANGLE_16 invalidRect;
 
 	server = subsystem->server;
-	screen = server->screen;
+	surface = server->surface;
 
 	invalidRect.left = x;
 	invalidRect.top = y;
 	invalidRect.right = x + width;
 	invalidRect.bottom = y + height;
 
-	EnterCriticalSection(&(screen->lock));
-	region16_union_rect(&(screen->invalidRegion), &(screen->invalidRegion), &invalidRect);
-	LeaveCriticalSection(&(screen->lock));
+	EnterCriticalSection(&(surface->lock));
+	region16_union_rect(&(surface->invalidRegion), &(surface->invalidRegion), &invalidRect);
+	LeaveCriticalSection(&(surface->lock));
 
 	return 1;
 }
@@ -287,14 +282,7 @@ int win_shadow_surface_copy(winShadowSubsystem* subsystem)
 
 	count = ArrayList_Count(server->clients);
 
-	InitializeSynchronizationBarrier(&(subsystem->barrier), count + 1, -1);
-
-	SetEvent(subsystem->updateEvent);
-
-	EnterSynchronizationBarrier(&(subsystem->barrier), 0);
-	ResetEvent(subsystem->updateEvent);
-
-	DeleteSynchronizationBarrier(&(subsystem->barrier));
+	shadow_subsystem_frame_update((rdpShadowSubsystem *)subsystem);
 
 	ArrayList_Unlock(server->clients);
 
@@ -408,7 +396,6 @@ int win_shadow_enum_monitors(MONITOR_DEF* monitors, int maxMonitors)
 	DWORD iDevNum = 0;
 	int numMonitors = 0;
 	MONITOR_DEF* monitor;
-	MONITOR_DEF* virtualScreen;
 	DISPLAY_DEVICE displayDevice;
 
 	ZeroMemory(&displayDevice, sizeof(DISPLAY_DEVICE));
@@ -485,9 +472,13 @@ int win_shadow_subsystem_start(winShadowSubsystem* subsystem)
 	if (!subsystem)
 		return -1;
 
-	thread = CreateThread(NULL, 0,
+	if (!(thread = CreateThread(NULL, 0,
 			(LPTHREAD_START_ROUTINE) win_shadow_subsystem_thread,
-			(void*) subsystem, 0, NULL);
+			(void*) subsystem, 0, NULL)))
+	{
+		WLog_ERR(TAG, "Failed to create thread");
+		return -1;
+	}
 
 	return 1;
 }
@@ -528,7 +519,7 @@ winShadowSubsystem* win_shadow_subsystem_new()
 	return subsystem;
 }
 
-int Win_ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints)
+FREERDP_API int Win_ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints)
 {
 	pEntryPoints->New = (pfnShadowSubsystemNew) win_shadow_subsystem_new;
 	pEntryPoints->Free = (pfnShadowSubsystemFree) win_shadow_subsystem_free;

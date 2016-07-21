@@ -3,6 +3,8 @@
  * Remote Assistance Virtual Channel
  *
  * Copyright 2014 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2015 Thincast Technologies GmbH
+ * Copyright 2015 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,17 +43,20 @@ struct remdesk_plugin
 	CHANNEL_DEF channelDef;
 	CHANNEL_ENTRY_POINTS_FREERDP channelEntryPoints;
 
+	RemdeskClientContext* context;
+
 	HANDLE thread;
 	wStream* data_in;
 	void* InitHandle;
 	DWORD OpenHandle;
-	wMessagePipe* MsgPipe;
 	rdpSettings* settings;
+	wMessageQueue* queue;
 
 	UINT32 Version;
 	char* ExpertBlob;
 	BYTE* EncryptedPassStub;
 	int EncryptedPassStubSize;
+	rdpContext* rdpcontext;
 };
 typedef struct remdesk_plugin remdeskPlugin;
 

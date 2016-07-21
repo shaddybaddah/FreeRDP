@@ -57,7 +57,7 @@ void update_process_glyph(rdpContext* context, BYTE* data, int* index,
 
 		if (offset & 0x80)
 		{
-			offset = data[*index + 1] | (data[*index + 2] << 8);
+			offset = data[*index + 1] | ((int)((signed char)data[*index + 2]) << 8);
 			(*index)++;
 			(*index)++;
 		}
@@ -77,7 +77,7 @@ void update_process_glyph(rdpContext* context, BYTE* data, int* index,
 	}
 }
 
-void update_process_glyph_fragments(rdpContext* context, BYTE* data, UINT32 length,
+BOOL update_process_glyph_fragments(rdpContext* context, BYTE* data, UINT32 length,
 		UINT32 cacheId, UINT32 ulCharInc, UINT32 flAccel, UINT32 bgcolor, UINT32 fgcolor, int x, int y,
 		int bkX, int bkY, int bkWidth, int bkHeight, int opX, int opY, int opWidth, int opHeight, BOOL fOpRedundant)
 {
@@ -92,10 +92,38 @@ void update_process_glyph_fragments(rdpContext* context, BYTE* data, UINT32 leng
 	graphics = context->graphics;
 	glyph_cache = context->cache->glyph;
 
+	if (opX + opWidth > context->settings->DesktopWidth)
+	{
+		/**
+		 * Some Microsoft servers send erroneous high values close to the
+		 * sint16 maximum in the OpRight field of the GlyphIndex, FastIndex and
+		 * FastGlyph drawing orders, probably a result of applications trying to
+		 * clear the text line to the very right end.
+		 * One example where this can be seen is typing in notepad.exe within
+		 * a RDP session to Windows XP Professional SP3.
+		 * This workaround prevents resulting problems in the UI callbacks.
+		 */
+		opWidth = context->settings->DesktopWidth - opX;
+	}
+
 	if (opWidth > 0 && opHeight > 0)
-		Glyph_BeginDraw(context, opX, opY, opWidth, opHeight, bgcolor, fgcolor, fOpRedundant);
+	{
+		if (!Glyph_BeginDraw(context, opX, opY, opWidth, opHeight, bgcolor, fgcolor, fOpRedundant))
+			return FALSE;
+	}
 	else
-		Glyph_BeginDraw(context, 0, 0, 0, 0, bgcolor, fgcolor, fOpRedundant);
+	{
+		if (fOpRedundant)
+		{
+			if (!Glyph_BeginDraw(context, bkX, bkY, bkWidth, bkHeight, bgcolor, fgcolor, fOpRedundant))
+				return FALSE;
+		}
+		else
+		{
+			if (!Glyph_BeginDraw(context, 0, 0, 0, 0, bgcolor, fgcolor, fOpRedundant))
+				return FALSE;
+		}
+	}
 
 	while (index < (int) length)
 	{
@@ -150,7 +178,10 @@ void update_process_glyph_fragments(rdpContext* context, BYTE* data, UINT32 leng
 				size = data[index + 2];
 
 				fragments = (BYTE*) malloc(size);
-				memcpy(fragments, data, size);
+				if (!fragments)
+					return FALSE;
+				CopyMemory(fragments, data, size);
+
 				glyph_cache_fragment_put(glyph_cache, id, size, fragments);
 
 				index += 3;
@@ -168,12 +199,12 @@ void update_process_glyph_fragments(rdpContext* context, BYTE* data, UINT32 leng
 	}
 
 	if (opWidth > 0 && opHeight > 0)
-		Glyph_EndDraw(context, opX, opY, opWidth, opHeight, bgcolor, fgcolor);
-	else
-		Glyph_EndDraw(context, bkX, bkY, bkWidth, bkHeight, bgcolor, fgcolor);
+		return Glyph_EndDraw(context, opX, opY, opWidth, opHeight, bgcolor, fgcolor);
+
+	return Glyph_EndDraw(context, bkX, bkY, bkWidth, bkHeight, bgcolor, fgcolor);
 }
 
-void update_gdi_glyph_index(rdpContext* context, GLYPH_INDEX_ORDER* glyphIndex)
+BOOL update_gdi_glyph_index(rdpContext* context, GLYPH_INDEX_ORDER* glyphIndex)
 {
 	rdpGlyphCache* glyph_cache;
 	int bkWidth, bkHeight, opWidth, opHeight;
@@ -185,19 +216,7 @@ void update_gdi_glyph_index(rdpContext* context, GLYPH_INDEX_ORDER* glyphIndex)
 	bkHeight = glyphIndex->bkBottom - glyphIndex->bkTop;
 	opHeight = glyphIndex->opBottom - glyphIndex->opTop;
 
-	if (glyphIndex->opRight > context->settings->DesktopWidth)
-	{
-		/**
-		 * Some Microsoft servers send erroneous high values close to the
-		 * sint16 maximum in the OpRight field of this drawing order.
-		 * (One example where this can be seen is in notepad when connected to
-		 * Windows XP with disabled fast index and fast glyph capabilities.)
-		 * This workaround prevents resulting problems in the UI callbacks.
-		 */
-		opWidth = context->settings->DesktopWidth - glyphIndex->opLeft;
-	}
-
-	update_process_glyph_fragments(context, glyphIndex->data, glyphIndex->cbData,
+	return update_process_glyph_fragments(context, glyphIndex->data, glyphIndex->cbData,
 			glyphIndex->cacheId, glyphIndex->ulCharInc, glyphIndex->flAccel,
 			glyphIndex->backColor, glyphIndex->foreColor, glyphIndex->x, glyphIndex->y,
 			glyphIndex->bkLeft, glyphIndex->bkTop, bkWidth, bkHeight,
@@ -205,7 +224,7 @@ void update_gdi_glyph_index(rdpContext* context, GLYPH_INDEX_ORDER* glyphIndex)
 			glyphIndex->fOpRedundant);
 }
 
-void update_gdi_fast_index(rdpContext* context, FAST_INDEX_ORDER* fastIndex)
+BOOL update_gdi_fast_index(rdpContext* context, FAST_INDEX_ORDER* fastIndex)
 {
 	INT32 x, y;
 	INT32 opLeft, opTop;
@@ -241,13 +260,19 @@ void update_gdi_fast_index(rdpContext* context, FAST_INDEX_ORDER* fastIndex)
 	if (opRight == 0)
 		opRight = fastIndex->bkRight;
 
+	/* Server can send a massive number (32766) which appears to be
+	 * undocumented special behavior for "Erase all the way right".
+	 * X11 has nondeterministic results asking for a draw that wide. */
+	if (opRight > context->instance->settings->DesktopWidth)
+		opRight = context->instance->settings->DesktopWidth;
+
 	if (x == -32768)
 		x = fastIndex->bkLeft;
 
 	if (y == -32768)
 		y = fastIndex->bkTop;
 
-	update_process_glyph_fragments(context, fastIndex->data, fastIndex->cbData,
+	return update_process_glyph_fragments(context, fastIndex->data, fastIndex->cbData,
 			fastIndex->cacheId, fastIndex->ulCharInc, fastIndex->flAccel,
 			fastIndex->backColor, fastIndex->foreColor, x, y,
 			fastIndex->bkLeft, fastIndex->bkTop,
@@ -257,7 +282,7 @@ void update_gdi_fast_index(rdpContext* context, FAST_INDEX_ORDER* fastIndex)
 			FALSE);
 }
 
-void update_gdi_fast_glyph(rdpContext* context, FAST_GLYPH_ORDER* fastGlyph)
+BOOL update_gdi_fast_glyph(rdpContext* context, FAST_GLYPH_ORDER* fastGlyph)
 {
 	INT32 x, y;
 	rdpGlyph* glyph;
@@ -294,6 +319,10 @@ void update_gdi_fast_glyph(rdpContext* context, FAST_GLYPH_ORDER* fastGlyph)
 	if (opRight == 0)
 		opRight = fastGlyph->bkRight;
 
+	/* See update_gdi_fast_index opRight comment. */
+	if (opRight > context->instance->settings->DesktopWidth)
+		opRight = context->instance->settings->DesktopWidth;
+
 	if (x == -32768)
 		x = fastGlyph->bkLeft;
 
@@ -306,14 +335,20 @@ void update_gdi_fast_glyph(rdpContext* context, FAST_GLYPH_ORDER* fastGlyph)
 		glyphData = &fastGlyph->glyphData;
 
 		glyph = Glyph_Alloc(context);
+		if (!glyph)
+			return FALSE;
 		glyph->x = glyphData->x;
 		glyph->y = glyphData->y;
 		glyph->cx = glyphData->cx;
 		glyph->cy = glyphData->cy;
 		glyph->cb = glyphData->cb;
 		glyph->aj = malloc(glyphData->cb);
+		if (!glyph->aj)
+			goto error_aj;
 		CopyMemory(glyph->aj, glyphData->aj, glyph->cb);
-		Glyph_New(context, glyph);
+
+		if (!Glyph_New(context, glyph))
+			goto error_glyph_new;
 
 		glyph_cache_put(cache->glyph, fastGlyph->cacheId, fastGlyph->data[0], glyph);
 	}
@@ -321,7 +356,7 @@ void update_gdi_fast_glyph(rdpContext* context, FAST_GLYPH_ORDER* fastGlyph)
 	text_data[0] = fastGlyph->data[0];
 	text_data[1] = 0;
 
-	update_process_glyph_fragments(context, text_data, 1,
+	return update_process_glyph_fragments(context, text_data, 1,
 			fastGlyph->cacheId, fastGlyph->ulCharInc, fastGlyph->flAccel,
 			fastGlyph->backColor, fastGlyph->foreColor, x, y,
 			fastGlyph->bkLeft, fastGlyph->bkTop,
@@ -329,9 +364,16 @@ void update_gdi_fast_glyph(rdpContext* context, FAST_GLYPH_ORDER* fastGlyph)
 			opLeft, opTop,
 			opRight - opLeft, opBottom - opTop,
 			FALSE);
+
+error_glyph_new:
+	free(glyph->aj);
+	glyph->aj = NULL;
+error_aj:
+	Glyph_Free(context, glyph);
+	return FALSE;
 }
 
-void update_gdi_cache_glyph(rdpContext* context, CACHE_GLYPH_ORDER* cacheGlyph)
+BOOL update_gdi_cache_glyph(rdpContext* context, CACHE_GLYPH_ORDER* cacheGlyph)
 {
 	int i;
 	rdpGlyph* glyph;
@@ -343,6 +385,8 @@ void update_gdi_cache_glyph(rdpContext* context, CACHE_GLYPH_ORDER* cacheGlyph)
 		glyph_data = &cacheGlyph->glyphData[i];
 
 		glyph = Glyph_Alloc(context);
+		if (!glyph)
+			return FALSE;
 
 		glyph->x = glyph_data->x;
 		glyph->y = glyph_data->y;
@@ -350,13 +394,18 @@ void update_gdi_cache_glyph(rdpContext* context, CACHE_GLYPH_ORDER* cacheGlyph)
 		glyph->cy = glyph_data->cy;
 		glyph->cb = glyph_data->cb;
 		glyph->aj = glyph_data->aj;
-		Glyph_New(context, glyph);
+		if (!Glyph_New(context, glyph))
+		{
+			Glyph_Free(context, glyph);
+			return FALSE;
+		}
 
 		glyph_cache_put(cache->glyph, cacheGlyph->cacheId, glyph_data->cacheIndex, glyph);
 	}
+	return TRUE;
 }
 
-void update_gdi_cache_glyph_v2(rdpContext* context, CACHE_GLYPH_V2_ORDER* cacheGlyphV2)
+BOOL update_gdi_cache_glyph_v2(rdpContext* context, CACHE_GLYPH_V2_ORDER* cacheGlyphV2)
 {
 	int i;
 	rdpGlyph* glyph;
@@ -368,6 +417,11 @@ void update_gdi_cache_glyph_v2(rdpContext* context, CACHE_GLYPH_V2_ORDER* cacheG
 		glyphData = &cacheGlyphV2->glyphData[i];
 
 		glyph = Glyph_Alloc(context);
+		if (!glyph)
+		{
+			/* TODO: cleanup perviosly allocated glyph memory in error case */
+			return FALSE;
+		}
 
 		glyph->x = glyphData->x;
 		glyph->y = glyphData->y;
@@ -379,30 +433,31 @@ void update_gdi_cache_glyph_v2(rdpContext* context, CACHE_GLYPH_V2_ORDER* cacheG
 
 		glyph_cache_put(cache->glyph, cacheGlyphV2->cacheId, glyphData->cacheIndex, glyph);
 	}
+	return TRUE;
 }
 
 rdpGlyph* glyph_cache_get(rdpGlyphCache* glyphCache, UINT32 id, UINT32 index)
 {
 	rdpGlyph* glyph;
 
-	WLog_Print(glyphCache->log, WLOG_DEBUG, "GlyphCacheGet: id: %d index: %d", id, index);
+	WLog_DBG(TAG, "GlyphCacheGet: id: %d index: %d", id, index);
 
 	if (id > 9)
 	{
-		WLog_ERR(TAG,  "invalid glyph cache id: %d", id);
+		WLog_ERR(TAG, "invalid glyph cache id: %d", id);
 		return NULL;
 	}
 
 	if (index > glyphCache->glyphCache[id].number)
 	{
-		WLog_ERR(TAG,  "index %d out of range for cache id: %d", index, id);
+		WLog_ERR(TAG, "index %d out of range for cache id: %d", index, id);
 		return NULL;
 	}
 
 	glyph = glyphCache->glyphCache[id].entries[index];
 
 	if (!glyph)
-		WLog_ERR(TAG,  "no glyph found at cache index: %d in cache id: %d", index, id);
+		WLog_ERR(TAG, "no glyph found at cache index: %d in cache id: %d", index, id);
 
 	return glyph;
 }
@@ -413,26 +468,24 @@ void glyph_cache_put(rdpGlyphCache* glyphCache, UINT32 id, UINT32 index, rdpGlyp
 
 	if (id > 9)
 	{
-		WLog_ERR(TAG,  "invalid glyph cache id: %d", id);
+		WLog_ERR(TAG, "invalid glyph cache id: %d", id);
 		return;
 	}
 
 	if (index > glyphCache->glyphCache[id].number)
 	{
-		WLog_ERR(TAG,  "invalid glyph cache index: %d in cache id: %d", index, id);
+		WLog_ERR(TAG, "invalid glyph cache index: %d in cache id: %d", index, id);
 		return;
 	}
 
-	WLog_Print(glyphCache->log, WLOG_DEBUG, "GlyphCachePut: id: %d index: %d", id, index);
+	WLog_DBG(TAG, "GlyphCachePut: id: %d index: %d", id, index);
 
 	prevGlyph = glyphCache->glyphCache[id].entries[index];
 
 	if (prevGlyph)
 	{
 		Glyph_Free(glyphCache->context, prevGlyph);
-
-		if (prevGlyph->aj)
-			free(prevGlyph->aj);
+		free(prevGlyph->aj);
 		free(prevGlyph);
 	}
 
@@ -445,17 +498,17 @@ void* glyph_cache_fragment_get(rdpGlyphCache* glyphCache, UINT32 index, UINT32* 
 
 	if (index > 255)
 	{
-		WLog_ERR(TAG,  "invalid glyph cache fragment index: %d", index);
+		WLog_ERR(TAG, "invalid glyph cache fragment index: %d", index);
 		return NULL;
 	}
 
 	fragment = glyphCache->fragCache.entries[index].fragment;
 	*size = (BYTE) glyphCache->fragCache.entries[index].size;
 
-	WLog_Print(glyphCache->log, WLOG_DEBUG, "GlyphCacheFragmentGet: index: %d size: %d", index, *size);
+	WLog_DBG(TAG, "GlyphCacheFragmentGet: index: %d size: %d", index, *size);
 
 	if (!fragment)
-		WLog_ERR(TAG,  "invalid glyph fragment at index:%d", index);
+		WLog_ERR(TAG, "invalid glyph fragment at index:%d", index);
 
 	return fragment;
 }
@@ -466,19 +519,18 @@ void glyph_cache_fragment_put(rdpGlyphCache* glyphCache, UINT32 index, UINT32 si
 
 	if (index > 255)
 	{
-		WLog_ERR(TAG,  "invalid glyph cache fragment index: %d", index);
+		WLog_ERR(TAG, "invalid glyph cache fragment index: %d", index);
 		return;
 	}
 
-	WLog_Print(glyphCache->log, WLOG_DEBUG, "GlyphCacheFragmentPut: index: %d size: %d", index, size);
+	WLog_DBG(TAG, "GlyphCacheFragmentPut: index: %d size: %d", index, size);
 
 	prevFragment = glyphCache->fragCache.entries[index].fragment;
 
 	glyphCache->fragCache.entries[index].fragment = fragment;
 	glyphCache->fragCache.entries[index].size = size;
 
-	if (!prevFragment)
-		free(prevFragment);
+	free(prevFragment);
 }
 
 void glyph_cache_register_callbacks(rdpUpdate* update)
@@ -494,13 +546,11 @@ rdpGlyphCache* glyph_cache_new(rdpSettings* settings)
 {
 	rdpGlyphCache* glyphCache;
 
-	glyphCache = (rdpGlyphCache*) malloc(sizeof(rdpGlyphCache));
+	glyphCache = (rdpGlyphCache*) calloc(1, sizeof(rdpGlyphCache));
 
 	if (glyphCache)
 	{
 		int i;
-
-		ZeroMemory(glyphCache, sizeof(rdpGlyphCache));
 
 		WLog_Init();
 		glyphCache->log = WLog_Get("com.freerdp.cache.glyph");
@@ -512,12 +562,10 @@ rdpGlyphCache* glyph_cache_new(rdpSettings* settings)
 		{
 			glyphCache->glyphCache[i].number = settings->GlyphCache[i].cacheEntries;
 			glyphCache->glyphCache[i].maxCellSize = settings->GlyphCache[i].cacheMaximumCellSize;
-			glyphCache->glyphCache[i].entries = (rdpGlyph**) malloc(sizeof(rdpGlyph*) * glyphCache->glyphCache[i].number);
-			ZeroMemory(glyphCache->glyphCache[i].entries, sizeof(rdpGlyph*) * glyphCache->glyphCache[i].number);
+			glyphCache->glyphCache[i].entries = (rdpGlyph**) calloc(glyphCache->glyphCache[i].number, sizeof(rdpGlyph*));
 		}
 
-		glyphCache->fragCache.entries = malloc(sizeof(FRAGMENT_CACHE_ENTRY) * 256);
-		ZeroMemory(glyphCache->fragCache.entries, sizeof(FRAGMENT_CACHE_ENTRY) * 256);
+		glyphCache->fragCache.entries = calloc(256, sizeof(FRAGMENT_CACHE_ENTRY));
 	}
 
 	return glyphCache;
@@ -528,7 +576,6 @@ void glyph_cache_free(rdpGlyphCache* glyphCache)
 	if (glyphCache)
 	{
 		int i;
-		void* fragment;
 
 		for (i = 0; i < 10; i++)
 		{
@@ -543,11 +590,8 @@ void glyph_cache_free(rdpGlyphCache* glyphCache)
 				if (glyph)
 				{
 					Glyph_Free(glyphCache->context, glyph);
-
-					if (glyph->aj)
-						free(glyph->aj);
+					free(glyph->aj);
 					free(glyph);
-
 					glyphCache->glyphCache[i].entries[j] = NULL;
 				}
 			}
@@ -555,10 +599,9 @@ void glyph_cache_free(rdpGlyphCache* glyphCache)
 			glyphCache->glyphCache[i].entries = NULL;
 		}
 
-		for (i = 0; i < 255; i++)
+		for (i = 0; i < 256; i++)
 		{
-			fragment = glyphCache->fragCache.entries[i].fragment;
-			free(fragment);
+			free(glyphCache->fragCache.entries[i].fragment);
 			glyphCache->fragCache.entries[i].fragment = NULL;
 		}
 

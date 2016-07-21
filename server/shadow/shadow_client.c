@@ -26,6 +26,7 @@
 #include <winpr/synch.h>
 #include <winpr/thread.h>
 #include <winpr/sysinfo.h>
+#include <winpr/interlocked.h>
 
 #include <freerdp/log.h>
 
@@ -33,10 +34,21 @@
 
 #define TAG CLIENT_TAG("shadow")
 
-void shadow_client_context_new(freerdp_peer* peer, rdpShadowClient* client)
+static void shadow_client_free_queued_message(void *obj)
+{
+	wMessage *message = (wMessage*)obj;
+	if (message->Free)
+	{
+		message->Free(message);
+		message->Free = NULL;
+	}
+}
+
+BOOL shadow_client_context_new(freerdp_peer* peer, rdpShadowClient* client)
 {
 	rdpSettings* settings;
 	rdpShadowServer* server;
+	const wObject cb = { NULL, NULL, NULL, shadow_client_free_queued_message, NULL };
 
 	server = (rdpShadowServer*) peer->ContextExtra;
 	client->server = server;
@@ -62,26 +74,64 @@ void shadow_client_context_new(freerdp_peer* peer, rdpShadowClient* client)
 	settings->TlsSecurity = TRUE;
 	settings->NlaSecurity = FALSE;
 
-	settings->CertificateFile = _strdup(server->CertificateFile);
-	settings->PrivateKeyFile = _strdup(server->PrivateKeyFile);
+	if (!(settings->CertificateFile = _strdup(server->CertificateFile)))
+		goto fail_cert_file;
+	if (!(settings->PrivateKeyFile = _strdup(server->PrivateKeyFile)))
+		goto fail_privkey_file;
+	if (!(settings->RdpKeyFile = _strdup(settings->PrivateKeyFile)))
+		goto fail_rdpkey_file;
 
-	settings->RdpKeyFile = _strdup(settings->PrivateKeyFile);
+
+	if (server->ipcSocket)
+	{
+		settings->LyncRdpMode = TRUE;
+		settings->CompressionEnabled = FALSE;
+	}
 
 	client->inLobby = TRUE;
 	client->mayView = server->mayView;
 	client->mayInteract = server->mayInteract;
 
-	InitializeCriticalSectionAndSpinCount(&(client->lock), 4000);
+	if (!InitializeCriticalSectionAndSpinCount(&(client->lock), 4000))
+		goto fail_client_lock;
 
 	region16_init(&(client->invalidRegion));
 
 	client->vcm = WTSOpenServerA((LPSTR) peer->context);
+	if (!client->vcm || client->vcm == INVALID_HANDLE_VALUE)
+		goto fail_open_server;
 
-	client->StopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (!(client->MsgQueue = MessageQueue_New(&cb)))
+		goto fail_message_queue;
 
-	client->encoder = shadow_encoder_new(client);
+	if (!(client->encoder = shadow_encoder_new(client)))
+		goto fail_encoder_new;
 
-	ArrayList_Add(server->clients, (void*) client);
+	if (ArrayList_Add(server->clients, (void*) client) >= 0)
+		return TRUE;
+
+	shadow_encoder_free(client->encoder);
+	client->encoder = NULL;
+fail_encoder_new:
+	MessageQueue_Free(client->MsgQueue);
+	client->MsgQueue = NULL;
+fail_message_queue:
+	WTSCloseServer((HANDLE) client->vcm);
+	client->vcm = NULL;
+fail_open_server:
+	DeleteCriticalSection(&(client->lock));
+fail_client_lock:
+	free(settings->RdpKeyFile);
+	settings->RdpKeyFile = NULL;
+fail_rdpkey_file:
+	free(settings->PrivateKeyFile);
+	settings->PrivateKeyFile = NULL;
+fail_privkey_file:
+	free(settings->CertificateFile);
+	settings->CertificateFile = NULL;
+fail_cert_file:
+
+	return FALSE;
 }
 
 void shadow_client_context_free(freerdp_peer* peer, rdpShadowClient* client)
@@ -96,13 +146,9 @@ void shadow_client_context_free(freerdp_peer* peer, rdpShadowClient* client)
 
 	WTSCloseServer((HANDLE) client->vcm);
 
-	CloseHandle(client->StopEvent);
-
-	if (client->lobby)
-	{
-		shadow_surface_free(client->lobby);
-		client->lobby = NULL;
-	}
+    /* Clear queued messages and free resource */
+	MessageQueue_Clear(client->MsgQueue);
+	MessageQueue_Free(client->MsgQueue);
 
 	if (client->encoder)
 	{
@@ -113,23 +159,50 @@ void shadow_client_context_free(freerdp_peer* peer, rdpShadowClient* client)
 
 void shadow_client_message_free(wMessage* message)
 {
-	if (message->id == SHADOW_MSG_IN_REFRESH_OUTPUT_ID)
+	switch(message->id)
 	{
-		SHADOW_MSG_IN_REFRESH_OUTPUT* wParam = (SHADOW_MSG_IN_REFRESH_OUTPUT*) message->wParam;
+		case SHADOW_MSG_IN_REFRESH_OUTPUT_ID:
+			free(((SHADOW_MSG_IN_REFRESH_OUTPUT*)message->wParam)->rects);
+			free(message->wParam);
+			break;
 
-		free(wParam->rects);
-		free(wParam);
-	}
-	else if (message->id == SHADOW_MSG_IN_SUPPRESS_OUTPUT_ID)
-	{
-		SHADOW_MSG_IN_SUPPRESS_OUTPUT* wParam = (SHADOW_MSG_IN_SUPPRESS_OUTPUT*) message->wParam;
-		free(wParam);
+		case SHADOW_MSG_IN_SUPPRESS_OUTPUT_ID:
+			free(message->wParam);
+			break;
+
+		default:
+			WLog_ERR(TAG, "Unknown message id: %u", message->id);
+			free(message->wParam);
+			break;
 	}
 }
 
 BOOL shadow_client_capabilities(freerdp_peer* peer)
 {
+	rdpShadowSubsystem* subsystem;
+	rdpShadowClient* client;
+
+	client = (rdpShadowClient*) peer->context;
+	subsystem = client->server->subsystem;
+
+	if (subsystem->ClientCapabilities)
+	{
+		return subsystem->ClientCapabilities(subsystem, client);
+	}
 	return TRUE;
+}
+
+static INLINE void shadow_client_calc_desktop_size(rdpShadowServer* server, int* pWidth, int* pHeight)
+{
+	RECTANGLE_16 viewport = {0, 0, server->screen->width, server->screen->height};
+
+	if (server->shareSubRect)
+	{
+		rectangles_intersection(&viewport, &(server->subRect), &viewport); 
+	}
+
+	(*pWidth) = viewport.right - viewport.left;
+	(*pHeight) = viewport.bottom - viewport.top;
 }
 
 BOOL shadow_client_post_connect(freerdp_peer* peer)
@@ -147,17 +220,7 @@ BOOL shadow_client_post_connect(freerdp_peer* peer)
 	server = client->server;
 	subsystem = server->subsystem;
 
-	if (!server->shareSubRect)
-	{
-		width = server->screen->width;
-		height = server->screen->height;
-	}
-	else
-	{
-		width = server->subRect.right - server->subRect.left;
-		height = server->subRect.bottom - server->subRect.top;
-	}
-
+	shadow_client_calc_desktop_size(server, &width, &height);
 	settings->DesktopWidth = width;
 	settings->DesktopHeight = height;
 
@@ -172,27 +235,26 @@ BOOL shadow_client_post_connect(freerdp_peer* peer)
 
 	peer->update->DesktopResize(peer->update->context);
 
-	shadow_client_channels_post_connect(client);
+	if (shadow_client_channels_post_connect(client) != CHANNEL_RC_OK)
+		return FALSE;
 
 	invalidRect.left = 0;
 	invalidRect.top = 0;
-	invalidRect.right = width;
-	invalidRect.bottom = height;
+	invalidRect.right = server->screen->width;
+	invalidRect.bottom = server->screen->height;
 
 	region16_union_rect(&(client->invalidRegion), &(client->invalidRegion), &invalidRect);
-
-	shadow_client_init_lobby(client);
 
 	authStatus = -1;
 
 	if (settings->Username && settings->Password)
 		settings->AutoLogonEnabled = TRUE;
 
-	if (settings->AutoLogonEnabled && server->authentication)
+	if (server->authentication)
 	{
 		if (subsystem->Authenticate)
 		{
-			authStatus = subsystem->Authenticate(subsystem,
+			authStatus = subsystem->Authenticate(subsystem, client,
 					settings->Username, settings->Domain, settings->Password);
 		}
 	}
@@ -206,19 +268,49 @@ BOOL shadow_client_post_connect(freerdp_peer* peer)
 		}
 	}
 
+	if (subsystem->ClientConnect)
+	{
+		return subsystem->ClientConnect(subsystem, client);
+	}
+
 	return TRUE;
 }
 
-void shadow_client_refresh_rect(rdpShadowClient* client, BYTE count, RECTANGLE_16* areas)
+/* Convert rects in sub rect coordinate to client/surface coordinate */
+static INLINE void shadow_client_convert_rects(rdpShadowClient* client, 
+		RECTANGLE_16* dst, RECTANGLE_16* src, UINT32 numRects)
+{
+	if (client->server->shareSubRect)
+	{
+		int i = 0;
+		UINT16 offsetX = client->server->subRect.left;
+		UINT16 offsetY = client->server->subRect.top;
+
+		for (i = 0; i < numRects; i++)
+		{
+			dst[i].left = src[i].left + offsetX;
+			dst[i].right = src[i].right + offsetX;
+			dst[i].top = src[i].top + offsetY;
+			dst[i].bottom = src[i].bottom + offsetY;
+		}
+	}
+	else
+	{
+		CopyMemory(dst, src, numRects * sizeof(RECTANGLE_16));
+	}
+}
+
+BOOL shadow_client_refresh_rect(rdpShadowClient* client, BYTE count, RECTANGLE_16* areas)
 {
 	wMessage message = { 0 };
 	SHADOW_MSG_IN_REFRESH_OUTPUT* wParam;
 	wMessagePipe* MsgPipe = client->subsystem->MsgPipe;
 
-	wParam = (SHADOW_MSG_IN_REFRESH_OUTPUT*) calloc(1, sizeof(SHADOW_MSG_IN_REFRESH_OUTPUT));
+	if (count && !areas)
+		return FALSE;
 
-	if (!wParam)
-		return;
+	if (!(wParam = (SHADOW_MSG_IN_REFRESH_OUTPUT*) calloc(1, sizeof(SHADOW_MSG_IN_REFRESH_OUTPUT))))
+		return FALSE;
 
 	wParam->numRects = (UINT32) count;
 
@@ -227,10 +319,13 @@ void shadow_client_refresh_rect(rdpShadowClient* client, BYTE count, RECTANGLE_1
 		wParam->rects = (RECTANGLE_16*) calloc(wParam->numRects, sizeof(RECTANGLE_16));
 
 		if (!wParam->rects)
-			return;
-	}
+		{
+			free (wParam);
+			return FALSE;
+		}
 
-	CopyMemory(wParam->rects, areas, wParam->numRects * sizeof(RECTANGLE_16));
+		shadow_client_convert_rects(client, wParam->rects, areas, wParam->numRects);
+	}
 
 	message.id = SHADOW_MSG_IN_REFRESH_OUTPUT_ID;
 	message.wParam = (void*) wParam;
@@ -238,24 +333,23 @@ void shadow_client_refresh_rect(rdpShadowClient* client, BYTE count, RECTANGLE_1
 	message.context = (void*) client;
 	message.Free = shadow_client_message_free;
 
-	MessageQueue_Dispatch(MsgPipe->In, &message);
+	return MessageQueue_Dispatch(MsgPipe->In, &message);
 }
 
-void shadow_client_suppress_output(rdpShadowClient* client, BYTE allow, RECTANGLE_16* area)
+BOOL shadow_client_suppress_output(rdpShadowClient* client, BYTE allow, RECTANGLE_16* area)
 {
 	wMessage message = { 0 };
 	SHADOW_MSG_IN_SUPPRESS_OUTPUT* wParam;
 	wMessagePipe* MsgPipe = client->subsystem->MsgPipe;
 
 	wParam = (SHADOW_MSG_IN_SUPPRESS_OUTPUT*) calloc(1, sizeof(SHADOW_MSG_IN_SUPPRESS_OUTPUT));
-
 	if (!wParam)
-		return;
+		return FALSE;
 
 	wParam->allow = (UINT32) allow;
 
 	if (area)
-		CopyMemory(&(wParam->rect), area, sizeof(RECTANGLE_16));
+		shadow_client_convert_rects(client, &(wParam->rect), area, 1);
 
 	message.id = SHADOW_MSG_IN_SUPPRESS_OUTPUT_ID;
 	message.wParam = (void*) wParam;
@@ -263,7 +357,7 @@ void shadow_client_suppress_output(rdpShadowClient* client, BYTE allow, RECTANGL
 	message.context = (void*) client;
 	message.Free = shadow_client_message_free;
 
-	MessageQueue_Dispatch(MsgPipe->In, &message);
+	return MessageQueue_Dispatch(MsgPipe->In, &message);
 }
 
 BOOL shadow_client_activate(freerdp_peer* peer)
@@ -288,24 +382,22 @@ BOOL shadow_client_activate(freerdp_peer* peer)
 
 	shadow_encoder_reset(client->encoder);
 
-	shadow_client_refresh_rect(client, 0, NULL);
-
-	return TRUE;
+	return shadow_client_refresh_rect(client, 0, NULL);
 }
 
-void shadow_client_surface_frame_acknowledge(rdpShadowClient* client, UINT32 frameId)
+BOOL shadow_client_surface_frame_acknowledge(rdpShadowClient* client, UINT32 frameId)
 {
-	SURFACE_FRAME* frame;
-	wListDictionary* frameList;
+	/*
+     * Record the last client acknowledged frame id to 
+	 * calculate how much frames are in progress.
+	 * Some rdp clients (win7 mstsc) skips frame ACK if it is 
+	 * inactive, we should not expect ACK for each frame. 
+	 * So it is OK to calculate inflight frame count according to
+	 * a latest acknowledged frame id.
+     */
+	client->encoder->lastAckframeId = frameId;
 
-	frameList = client->encoder->frameList;
-	frame = (SURFACE_FRAME*) ListDictionary_GetItemValue(frameList, (void*) (size_t) frameId);
-
-	if (frame)
-	{
-		ListDictionary_Remove(frameList, (void*) (size_t) frameId);
-		free(frame);
-	}
+	return TRUE;
 }
 
 int shadow_client_send_surface_frame_marker(rdpShadowClient* client, UINT32 action, UINT32 id)
@@ -365,12 +457,13 @@ int shadow_client_send_surface_bits(rdpShadowClient* client, rdpShadowSurface* s
 	}
 
 	if (encoder->frameAck)
-		frameId = (UINT32) shadow_encoder_create_frame_id(encoder);
+		frameId = shadow_encoder_create_frame_id(encoder);
 
 	if (settings->RemoteFxCodec)
 	{
 		RFX_RECT rect;
 		RFX_MESSAGE* messages;
+		RFX_RECT *messageRects = NULL;
 
 		shadow_encoder_prepare(encoder, FREERDP_CODEC_REMOTEFX);
 
@@ -381,25 +474,39 @@ int shadow_client_send_surface_bits(rdpShadowClient* client, rdpShadowSurface* s
 		rect.width = nWidth;
 		rect.height = nHeight;
 
-		messages = rfx_encode_messages(encoder->rfx, &rect, 1, pSrcData,
-				surface->width, surface->height, nSrcStep, &numMessages,
-				settings->MultifragMaxRequestSize);
+		if (!(messages = rfx_encode_messages(encoder->rfx, &rect, 1, pSrcData,
+				settings->DesktopWidth, settings->DesktopHeight, nSrcStep, &numMessages,
+				settings->MultifragMaxRequestSize)))
+		{
+			return 0;
+		}
 
 		cmd.codecID = settings->RemoteFxCodecId;
 
 		cmd.destLeft = 0;
 		cmd.destTop = 0;
-		cmd.destRight = surface->width;
-		cmd.destBottom = surface->height;
+		cmd.destRight = settings->DesktopWidth;
+		cmd.destBottom = settings->DesktopHeight;
 
 		cmd.bpp = 32;
-		cmd.width = surface->width;
-		cmd.height = surface->height;
+		cmd.width = settings->DesktopWidth;
+		cmd.height = settings->DesktopHeight;
+		cmd.skipCompression = TRUE;
+
+		if (numMessages > 0)
+			messageRects = messages[0].rects;
 
 		for (i = 0; i < numMessages; i++)
 		{
 			Stream_SetPosition(s, 0);
-			rfx_write_message(encoder->rfx, s, &messages[i]);
+			if (!rfx_write_message(encoder->rfx, s, &messages[i]))
+			{
+				while (i < numMessages)
+				{
+					rfx_message_free(encoder->rfx, &messages[i++]);
+				}
+				break;
+			}
 			rfx_message_free(encoder->rfx, &messages[i]);
 
 			cmd.bitmapDataLength = Stream_GetPosition(s);
@@ -414,6 +521,7 @@ int shadow_client_send_surface_bits(rdpShadowClient* client, rdpShadowSurface* s
 				IFCALL(update->SurfaceFrameBits, update->context, &cmd, first, last, frameId);
 		}
 
+		free(messageRects);
 		free(messages);
 	}
 	else if (settings->NSCodec)
@@ -491,6 +599,21 @@ int shadow_client_send_bitmap_update(rdpShadowClient* client, rdpShadowSurface* 
 	nSrcStep = surface->scanline;
 	SrcFormat = PIXEL_FORMAT_RGB32;
 
+	if (server->shareSubRect)
+	{
+		int subX, subY;
+		int subWidth, subHeight;
+
+		subX = server->subRect.left;
+		subY = server->subRect.top;
+		subWidth = server->subRect.right - server->subRect.left;
+		subHeight = server->subRect.bottom - server->subRect.top;
+
+		nXSrc -= subX;
+		nYSrc -= subY;
+		pSrcData = &pSrcData[(subY * nSrcStep) + (subX * 4)];
+	}
+
 	if ((nXSrc % 4) != 0)
 	{
 		nWidth += (nXSrc % 4);
@@ -510,22 +633,18 @@ int shadow_client_send_bitmap_update(rdpShadowClient* client, rdpShadowSurface* 
 	totalBitmapSize = 0;
 
 	bitmapUpdate.count = bitmapUpdate.number = rows * cols;
-	bitmapData = (BITMAP_DATA*) malloc(sizeof(BITMAP_DATA) * bitmapUpdate.number);
-	bitmapUpdate.rectangles = bitmapData;
-
-	if (!bitmapData)
+	if (!(bitmapData = (BITMAP_DATA*) malloc(sizeof(BITMAP_DATA) * bitmapUpdate.number)))
 		return -1;
+	bitmapUpdate.rectangles = bitmapData;
 
 	if ((nWidth % 4) != 0)
 	{
-		nXSrc -= (nWidth % 4);
-		nWidth += (nWidth % 4);
+		nWidth += (4 - (nWidth % 4));
 	}
 
 	if ((nHeight % 4) != 0)
 	{
-		nYSrc -= (nHeight % 4);
-		nHeight += (nHeight % 4);
+		nHeight += (4 - (nHeight % 4));
 	}
 
 	for (yIdx = 0; yIdx < rows; yIdx++)
@@ -603,9 +722,16 @@ int shadow_client_send_bitmap_update(rdpShadowClient* client, rdpShadowSurface* 
 		UINT32 i, j;
 		UINT32 updateSize;
 		UINT32 newUpdateSize;
-		BITMAP_DATA* fragBitmapData;
+		BITMAP_DATA* fragBitmapData = NULL;
 
-		fragBitmapData = (BITMAP_DATA*) malloc(sizeof(BITMAP_DATA) * k);
+		if (k > 0)
+			fragBitmapData = (BITMAP_DATA*) malloc(sizeof(BITMAP_DATA) * k);
+
+		if (!fragBitmapData)
+		{
+			free(bitmapData);
+			return -1;
+		}
 		bitmapUpdate.rectangles = fragBitmapData;
 
 		i = j = 0;
@@ -666,7 +792,7 @@ int shadow_client_send_surface_update(rdpShadowClient* client)
 	server = client->server;
 	encoder = client->encoder;
 
-	surface = client->inLobby ? client->lobby : server->surface;
+	surface = client->inLobby ? server->lobby : server->surface;
 
 	EnterCriticalSection(&(client->lock));
 
@@ -738,85 +864,6 @@ int shadow_client_surface_update(rdpShadowClient* client, REGION16* region)
 	return 1;
 }
 
-int shadow_client_convert_alpha_pointer_data(BYTE* pixels, BOOL premultiplied,
-		UINT32 width, UINT32 height, POINTER_COLOR_UPDATE* pointerColor)
-{
-	UINT32 x, y;
-	BYTE* pSrc8;
-	BYTE* pDst8;
-	int xorStep;
-	int andStep;
-	UINT32 andBit;
-	BYTE* andBits;
-	UINT32 andPixel;
-	BYTE A, R, G, B;
-
-	xorStep = (width * 3);
-	xorStep += (xorStep % 2);
-
-	andStep = ((width + 7) / 8);
-	andStep += (andStep % 2);
-
-	pointerColor->lengthXorMask = height * xorStep;
-	pointerColor->xorMaskData = (BYTE*) calloc(1, pointerColor->lengthXorMask);
-
-	if (!pointerColor->xorMaskData)
-		return -1;
-
-	pointerColor->lengthAndMask = height * andStep;
-	pointerColor->andMaskData = (BYTE*) calloc(1, pointerColor->lengthAndMask);
-
-	if (!pointerColor->andMaskData)
-		return -1;
-
-	for (y = 0; y < height; y++)
-	{
-		pSrc8 = &pixels[(width * 4) * (height - 1 - y)];
-		pDst8 = &(pointerColor->xorMaskData[y * xorStep]);
-
-		andBit = 0x80;
-		andBits = &(pointerColor->andMaskData[andStep * y]);
-
-		for (x = 0; x < width; x++)
-		{
-			B = *pSrc8++;
-			G = *pSrc8++;
-			R = *pSrc8++;
-			A = *pSrc8++;
-
-			andPixel = 0;
-
-			if (A < 64)
-				A = 0; /* pixel cannot be partially transparent */
-
-			if (!A)
-			{
-				/* transparent pixel: XOR = black, AND = 1 */
-				andPixel = 1;
-				B = G = R = 0;
-			}
-			else
-			{
-				if (premultiplied)
-				{
-					B = (B * 0xFF ) / A;
-					G = (G * 0xFF ) / A;
-					R = (R * 0xFF ) / A;
-				}
-			}
-
-			*pDst8++ = B;
-			*pDst8++ = G;
-			*pDst8++ = R;
-
-			if (andPixel) *andBits |= andBit;
-			if (!(andBit >>= 1)) { andBits++; andBit = 0x80; }
-		}
-	}
-
-	return 1;
-}
-
 int shadow_client_subsystem_process_message(rdpShadowClient* client, wMessage* message)
 {
 	rdpContext* context = (rdpContext*) client;
@@ -824,56 +871,90 @@ int shadow_client_subsystem_process_message(rdpShadowClient* client, wMessage* m
 
 	/* FIXME: the pointer updates appear to be broken when used with bulk compression and mstsc */
 
-	if (message->id == SHADOW_MSG_OUT_POINTER_POSITION_UPDATE_ID)
+	switch(message->id)
 	{
-		POINTER_POSITION_UPDATE pointerPosition;
-		SHADOW_MSG_OUT_POINTER_POSITION_UPDATE* msg = (SHADOW_MSG_OUT_POINTER_POSITION_UPDATE*) message->wParam;
-
-		pointerPosition.xPos = msg->xPos;
-		pointerPosition.yPos = msg->yPos;
-
-		if ((msg->xPos != client->pointerX) || (msg->yPos != client->pointerY))
+		case SHADOW_MSG_OUT_POINTER_POSITION_UPDATE_ID:
 		{
-			IFCALL(update->pointer->PointerPosition, context, &pointerPosition);
+			POINTER_POSITION_UPDATE pointerPosition;
+			SHADOW_MSG_OUT_POINTER_POSITION_UPDATE* msg = (SHADOW_MSG_OUT_POINTER_POSITION_UPDATE*) message->wParam;
 
-			client->pointerX = msg->xPos;
-			client->pointerY = msg->yPos;
+			pointerPosition.xPos = msg->xPos;
+			pointerPosition.yPos = msg->yPos;
+
+			if (client->server->shareSubRect)
+			{
+				pointerPosition.xPos -= client->server->subRect.left;
+				pointerPosition.yPos -= client->server->subRect.top;
+			}
+
+			if (client->activated)
+			{
+				if ((msg->xPos != client->pointerX) || (msg->yPos != client->pointerY))
+				{
+					IFCALL(update->pointer->PointerPosition, context, &pointerPosition);
+
+					client->pointerX = msg->xPos;
+					client->pointerY = msg->yPos;
+				}
+			}
+			break;
 		}
+		case SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE_ID:
+		{
+			POINTER_NEW_UPDATE pointerNew;
+			POINTER_COLOR_UPDATE* pointerColor;
+			POINTER_CACHED_UPDATE pointerCached;
+			SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE* msg = (SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE*) message->wParam;
 
-		free(msg);
+			ZeroMemory(&pointerNew, sizeof(POINTER_NEW_UPDATE));
+
+			pointerNew.xorBpp = 24;
+			pointerColor = &(pointerNew.colorPtrAttr);
+
+			pointerColor->cacheIndex = 0;
+			pointerColor->xPos = msg->xHot;
+			pointerColor->yPos = msg->yHot;
+			pointerColor->width = msg->width;
+			pointerColor->height = msg->height;
+			pointerColor->lengthAndMask = msg->lengthAndMask;
+			pointerColor->lengthXorMask = msg->lengthXorMask;
+			pointerColor->xorMaskData = msg->xorMaskData;
+			pointerColor->andMaskData = msg->andMaskData;
+
+			pointerCached.cacheIndex = pointerColor->cacheIndex;
+
+			if (client->activated)
+			{
+				IFCALL(update->pointer->PointerNew, context, &pointerNew);
+				IFCALL(update->pointer->PointerCached, context, &pointerCached);
+			}
+			break;
+		}
+		case SHADOW_MSG_OUT_AUDIO_OUT_SAMPLES_ID:
+		{
+			SHADOW_MSG_OUT_AUDIO_OUT_SAMPLES* msg = (SHADOW_MSG_OUT_AUDIO_OUT_SAMPLES*) message->wParam;
+			if (client->activated && client->rdpsnd && client->rdpsnd->Activated)
+			{
+				client->rdpsnd->src_format = msg->audio_format;
+				IFCALL(client->rdpsnd->SendSamples, client->rdpsnd, msg->buf, msg->nFrames, msg->wTimestamp);
+			}
+			break;
+		}
+		case SHADOW_MSG_OUT_AUDIO_OUT_VOLUME_ID:
+		{
+			SHADOW_MSG_OUT_AUDIO_OUT_VOLUME* msg = (SHADOW_MSG_OUT_AUDIO_OUT_VOLUME*) message->wParam;
+			if (client->activated && client->rdpsnd && client->rdpsnd->Activated)
+			{
+				IFCALL(client->rdpsnd->SetVolume, client->rdpsnd, msg->left, msg->right);
+			}
+			break;
+		}
+		default:
+			WLog_ERR(TAG, "Unknown message id: %u", message->id);
+			break;
 	}
-	else if (message->id == SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE_ID)
-	{
-		POINTER_NEW_UPDATE pointerNew;
-		POINTER_COLOR_UPDATE* pointerColor;
-		POINTER_CACHED_UPDATE pointerCached;
-		SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE* msg = (SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE*) message->wParam;
 
-		ZeroMemory(&pointerNew, sizeof(POINTER_NEW_UPDATE));
-
-		pointerNew.xorBpp = 24;
-		pointerColor = &(pointerNew.colorPtrAttr);
-
-		pointerColor->cacheIndex = 0;
-		pointerColor->xPos = msg->xHot;
-		pointerColor->yPos = msg->yHot;
-		pointerColor->width = msg->width;
-		pointerColor->height = msg->height;
-
-		pointerCached.cacheIndex = pointerColor->cacheIndex;
-
-		shadow_client_convert_alpha_pointer_data(msg->pixels, msg->premultiplied,
-				msg->width, msg->height, pointerColor);
-
-		IFCALL(update->pointer->PointerNew, context, &pointerNew);
-		IFCALL(update->pointer->PointerCached, context, &pointerCached);
-
-		free(pointerColor->xorMaskData);
-		free(pointerColor->andMaskData);
-
-		free(msg->pixels);
-		free(msg);
-	}
+	shadow_client_free_queued_message(message);
 
 	return 1;
 }
@@ -883,10 +964,13 @@ void* shadow_client_thread(rdpShadowClient* client)
 	DWORD status;
 	DWORD nCount;
 	wMessage message;
+	wMessage pointerPositionMsg;
+	wMessage pointerAlphaMsg;
+	wMessage audioVolumeMsg;
 	HANDLE events[32];
-	HANDLE StopEvent;
 	HANDLE ClientEvent;
 	HANDLE ChannelEvent;
+	void* UpdateSubscriber;
 	HANDLE UpdateEvent;
 	freerdp_peer* peer;
 	rdpContext* context;
@@ -895,7 +979,7 @@ void* shadow_client_thread(rdpShadowClient* client)
 	rdpShadowScreen* screen;
 	rdpShadowEncoder* encoder;
 	rdpShadowSubsystem* subsystem;
-	wMessagePipe* MsgPipe = client->subsystem->MsgPipe;
+	wMessageQueue* MsgQueue = client->MsgQueue;
 
 	server = client->server;
 	screen = server->screen;
@@ -914,35 +998,30 @@ void* shadow_client_thread(rdpShadowClient* client)
 
 	peer->Initialize(peer);
 
-	peer->update->RefreshRect = (pRefreshRect) shadow_client_refresh_rect;
-	peer->update->SuppressOutput = (pSuppressOutput) shadow_client_suppress_output;
-	peer->update->SurfaceFrameAcknowledge = (pSurfaceFrameAcknowledge) shadow_client_surface_frame_acknowledge;
+	peer->update->RefreshRect = (pRefreshRect)shadow_client_refresh_rect;
+	peer->update->SuppressOutput = (pSuppressOutput)shadow_client_suppress_output;
+	peer->update->SurfaceFrameAcknowledge = (pSurfaceFrameAcknowledge)shadow_client_surface_frame_acknowledge;
 
-	StopEvent = client->StopEvent;
-	UpdateEvent = subsystem->updateEvent;
+	if ((!client->vcm) || (!subsystem->updateEvent))
+		goto out;
+
+	UpdateSubscriber = shadow_multiclient_get_subscriber(subsystem->updateEvent);
+	if (!UpdateSubscriber)
+		goto out;
+
+	UpdateEvent = shadow_multiclient_getevent(UpdateSubscriber);
 	ClientEvent = peer->GetEventHandle(peer);
 	ChannelEvent = WTSVirtualChannelManagerGetEventHandle(client->vcm);
 
 	while (1)
 	{
 		nCount = 0;
-		events[nCount++] = StopEvent;
 		events[nCount++] = UpdateEvent;
 		events[nCount++] = ClientEvent;
 		events[nCount++] = ChannelEvent;
-		events[nCount++] = MessageQueue_Event(MsgPipe->Out);
+		events[nCount++] = MessageQueue_Event(MsgQueue);
 
 		status = WaitForMultipleObjects(nCount, events, FALSE, INFINITE);
-
-		if (WaitForSingleObject(StopEvent, 0) == WAIT_OBJECT_0)
-		{
-			if (WaitForSingleObject(UpdateEvent, 0) == WAIT_OBJECT_0)
-			{
-				EnterSynchronizationBarrier(&(subsystem->barrier), 0);
-			}
-
-			break;
-		}
 
 		if (WaitForSingleObject(UpdateEvent, 0) == WAIT_OBJECT_0)
 		{
@@ -951,20 +1030,51 @@ void* shadow_client_thread(rdpShadowClient* client)
 				int index;
 				int numRects = 0;
 				const RECTANGLE_16* rects;
+				int width, height;
 
-				rects = region16_rects(&(subsystem->invalidRegion), &numRects);
-
-				for (index = 0; index < numRects; index++)
+				/* Check resize */
+				shadow_client_calc_desktop_size(server, &width, &height);
+				if (settings->DesktopWidth != (UINT32)width || settings->DesktopHeight != (UINT32)height)
 				{
-					region16_union_rect(&(client->invalidRegion), &(client->invalidRegion), &rects[index]);
-				}
+					/* Screen size changed, do resize */
+					settings->DesktopWidth = width;
+					settings->DesktopHeight = height;
 
-				shadow_client_send_surface_update(client);
+					/**
+					 * Unset client activated flag to avoid sending update message during
+					 * resize. DesktopResize will reactive the client and 
+					 * shadow_client_activate would be invoked later.
+					 */
+					client->activated = FALSE;
+
+					/* Send Resize */
+					peer->update->DesktopResize(peer->update->context); // update_send_desktop_resize
+
+					/* Clear my invalidRegion. shadow_client_activate refreshes fullscreen */
+					region16_clear(&(client->invalidRegion));
+
+					WLog_ERR(TAG, "Client from %s is resized (%dx%d@%d)",
+							peer->hostname, settings->DesktopWidth, settings->DesktopHeight, settings->ColorDepth);
+				}
+				else 
+				{
+					/* Send frame */
+					rects = region16_rects(&(subsystem->invalidRegion), &numRects);
+
+					for (index = 0; index < numRects; index++)
+					{
+						region16_union_rect(&(client->invalidRegion), &(client->invalidRegion), &rects[index]);
+					}
+
+					shadow_client_send_surface_update(client);
+				}
 			}
 
-			EnterSynchronizationBarrier(&(subsystem->barrier), 0);
-
-			while (WaitForSingleObject(UpdateEvent, 0) == WAIT_OBJECT_0);
+			/* 
+			 * The return value of shadow_multiclient_consume is whether or not the subscriber really consumes the event.
+			 * It's not cared currently.
+			 */
+			(void)shadow_multiclient_consume(UpdateSubscriber);
 		}
 
 		if (WaitForSingleObject(ClientEvent, 0) == WAIT_OBJECT_0)
@@ -985,29 +1095,99 @@ void* shadow_client_thread(rdpShadowClient* client)
 			}
 		}
 
-		if (WaitForSingleObject(MessageQueue_Event(MsgPipe->Out), 0) == WAIT_OBJECT_0)
+		if (WaitForSingleObject(MessageQueue_Event(MsgQueue), 0) == WAIT_OBJECT_0)
 		{
-			if (MessageQueue_Peek(MsgPipe->Out, &message, TRUE))
+			/* Drain messages. Pointer update could be accumulated. */
+			pointerPositionMsg.id = 0;
+			pointerPositionMsg.Free= NULL;
+			pointerAlphaMsg.id = 0;
+			pointerAlphaMsg.Free = NULL;
+			audioVolumeMsg.id = 0;
+			audioVolumeMsg.Free = NULL;
+			while (MessageQueue_Peek(MsgQueue, &message, TRUE))
 			{
 				if (message.id == WMQ_QUIT)
+				{
 					break;
+				}
 
-				shadow_client_subsystem_process_message(client, &message);
+				switch(message.id)
+				{
+					case SHADOW_MSG_OUT_POINTER_POSITION_UPDATE_ID:
+						/* Abandon previous message */
+						shadow_client_free_queued_message(&pointerPositionMsg);
+						CopyMemory(&pointerPositionMsg, &message, sizeof(wMessage));
+						break;
+
+					case SHADOW_MSG_OUT_POINTER_ALPHA_UPDATE_ID:
+						/* Abandon previous message */
+						shadow_client_free_queued_message(&pointerAlphaMsg);
+						CopyMemory(&pointerAlphaMsg, &message, sizeof(wMessage));
+						break;
+
+					case SHADOW_MSG_OUT_AUDIO_OUT_VOLUME_ID:
+						/* Abandon previous message */
+						shadow_client_free_queued_message(&audioVolumeMsg);
+						CopyMemory(&audioVolumeMsg, &message, sizeof(wMessage));
+						break;
+
+					default:
+						shadow_client_subsystem_process_message(client, &message);
+						break;
+				}
+			}
+
+			if (message.id == WMQ_QUIT)
+			{
+				/* Release stored message */
+				shadow_client_free_queued_message(&pointerPositionMsg);
+				shadow_client_free_queued_message(&pointerAlphaMsg);
+				shadow_client_free_queued_message(&audioVolumeMsg);
+				break;
+			}
+			else
+			{
+				/* Process accumulated messages if needed */
+				if (pointerPositionMsg.id)
+				{
+					shadow_client_subsystem_process_message(client, &pointerPositionMsg);
+				}
+				if (pointerAlphaMsg.id)
+				{
+					shadow_client_subsystem_process_message(client, &pointerAlphaMsg);
+				}
+				if (audioVolumeMsg.id)
+				{
+					shadow_client_subsystem_process_message(client, &audioVolumeMsg);
+				}
 			}
 		}
 	}
 
+	/* Free channels early because we establish channels in post connect */
+	shadow_client_channels_free(client);
+
+	if (UpdateSubscriber)
+	{
+		shadow_multiclient_release_subscriber(UpdateSubscriber);
+		UpdateSubscriber = NULL;
+	}
+
+	if (peer->connected && subsystem->ClientDisconnect)
+	{
+		subsystem->ClientDisconnect(subsystem, client);
+	}
+
+out:
 	peer->Disconnect(peer);
 	
 	freerdp_peer_context_free(peer);
 	freerdp_peer_free(peer);
-
 	ExitThread(0);
-
 	return NULL;
 }
 
-void shadow_client_accepted(freerdp_listener* listener, freerdp_peer* peer)
+BOOL shadow_client_accepted(freerdp_listener* listener, freerdp_peer* peer)
 {
 	rdpShadowClient* client;
 	rdpShadowServer* server;
@@ -1018,10 +1198,117 @@ void shadow_client_accepted(freerdp_listener* listener, freerdp_peer* peer)
 	peer->ContextSize = sizeof(rdpShadowClient);
 	peer->ContextNew = (psPeerContextNew) shadow_client_context_new;
 	peer->ContextFree = (psPeerContextFree) shadow_client_context_free;
-	freerdp_peer_context_new(peer);
+
+	if (!freerdp_peer_context_new(peer))
+		return FALSE;
 
 	client = (rdpShadowClient*) peer->context;
 
-	client->thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)
-			shadow_client_thread, client, 0, NULL);
+	if (!(client->thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)
+			shadow_client_thread, client, 0, NULL)))
+	{
+		freerdp_peer_context_free(peer);
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+static void shadow_msg_out_addref(wMessage* message)
+{
+	SHADOW_MSG_OUT* msg = (SHADOW_MSG_OUT *)message->wParam;
+	InterlockedIncrement(&(msg->refCount));
+}
+
+static void shadow_msg_out_release(wMessage* message)
+{
+	SHADOW_MSG_OUT* msg = (SHADOW_MSG_OUT *)message->wParam;
+	if (InterlockedDecrement(&(msg->refCount)) <= 0)
+	{
+		if (msg->Free)
+			msg->Free(message->id, msg);
+	}
+}
+
+static BOOL shadow_client_dispatch_msg(rdpShadowClient* client, wMessage* message)
+{
+	/* Add reference when it is posted */
+	shadow_msg_out_addref(message);
+	if (MessageQueue_Dispatch(client->MsgQueue, message))
+	{
+		return TRUE;
+	}
+	else
+	{
+		/* Release the reference since post failed */
+		shadow_msg_out_release(message);
+		return FALSE;
+	}
+}
+
+BOOL shadow_client_post_msg(rdpShadowClient* client, void* context, UINT32 type, SHADOW_MSG_OUT* msg, void* lParam)
+{
+	wMessage message = {0};
+
+	message.context = context;
+	message.id = type;
+	message.wParam = (void *)msg;
+	message.lParam = lParam;
+	message.Free = shadow_msg_out_release;
+
+	return shadow_client_dispatch_msg(client, &message);
+}
+
+int shadow_client_boardcast_msg(rdpShadowServer* server, void* context, UINT32 type, SHADOW_MSG_OUT* msg, void* lParam)
+{
+	wMessage message = {0};
+	rdpShadowClient* client = NULL;
+	int count = 0;
+	int index = 0;
+
+	message.context = context;
+	message.id = type;
+	message.wParam = (void *)msg;
+	message.lParam = lParam;
+	message.Free = shadow_msg_out_release;
+
+	/* First add reference as we reference it in this function.
+     * Therefore it would not be free'ed during post. */
+	shadow_msg_out_addref(&message);
+
+	ArrayList_Lock(server->clients);
+	for (index = 0; index < ArrayList_Count(server->clients); index++)
+	{
+		client = (rdpShadowClient*)ArrayList_GetItem(server->clients, index);
+		if (shadow_client_dispatch_msg(client, &message))
+		{
+			count++;
+		}
+	}
+	ArrayList_Unlock(server->clients);
+
+    /* Release the reference for this function */
+	shadow_msg_out_release(&message);
+
+	return count;
+}
+
+int shadow_client_boardcast_quit(rdpShadowServer* server, int nExitCode)
+{
+	wMessageQueue* queue = NULL;
+	int count = 0;
+	int index = 0;
+
+	ArrayList_Lock(server->clients);
+	for (index = 0; index < ArrayList_Count(server->clients); index++)
+	{
+		queue = ((rdpShadowClient*)ArrayList_GetItem(server->clients, index))->MsgQueue;
+		if (MessageQueue_PostQuit(queue, nExitCode))
+		{
+			count++;
+		}
+	}
+	ArrayList_Unlock(server->clients);
+
+	return count;
 }

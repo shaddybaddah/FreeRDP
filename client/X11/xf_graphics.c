@@ -35,13 +35,14 @@
 #include <freerdp/codec/jpeg.h>
 
 #include "xf_graphics.h"
+#include "xf_gdi.h"
 
 #include <freerdp/log.h>
 #define TAG CLIENT_TAG("x11")
 
 /* Bitmap Class */
 
-void xf_Bitmap_New(rdpContext* context, rdpBitmap* bitmap)
+BOOL xf_Bitmap_New(rdpContext* context, rdpBitmap* bitmap)
 {
 	int depth;
 	BYTE* data;
@@ -63,10 +64,11 @@ void xf_Bitmap_New(rdpContext* context, rdpBitmap* bitmap)
 
 		if (depth != xfc->depth)
 		{
-			data = _aligned_malloc(bitmap->width * bitmap->height * 4, 16);
-
-			if (!data)
-				return;
+			if (!(data = _aligned_malloc(bitmap->width * bitmap->height * 4, 16)))
+			{
+				xf_unlock_x11(xfc, FALSE);
+				return FALSE;
+			}
 
 			SrcFormat = gdi_get_pixel_format(bitmap->bpp, TRUE);
 
@@ -90,6 +92,7 @@ void xf_Bitmap_New(rdpContext* context, rdpBitmap* bitmap)
 	((xfBitmap*) bitmap)->pixmap = pixmap;
 
 	xf_unlock_x11(xfc, FALSE);
+	return TRUE;
 }
 
 void xf_Bitmap_Free(rdpContext* context, rdpBitmap* bitmap)
@@ -104,11 +107,12 @@ void xf_Bitmap_Free(rdpContext* context, rdpBitmap* bitmap)
 	xf_unlock_x11(xfc, FALSE);
 }
 
-void xf_Bitmap_Paint(rdpContext* context, rdpBitmap* bitmap)
+BOOL xf_Bitmap_Paint(rdpContext* context, rdpBitmap* bitmap)
 {
 	XImage* image;
 	int width, height;
 	xfContext* xfc = (xfContext*) context;
+	BOOL ret = TRUE;
 
 	width = bitmap->right - bitmap->left + 1;
 	height = bitmap->bottom - bitmap->top + 1;
@@ -125,12 +129,13 @@ void xf_Bitmap_Paint(rdpContext* context, rdpBitmap* bitmap)
 
 	XFree(image);
 
-	gdi_InvalidateRegion(xfc->hdc, bitmap->left, bitmap->top, width, height);
+	ret = gdi_InvalidateRegion(xfc->hdc, bitmap->left, bitmap->top, width, height);
 
 	xf_unlock_x11(xfc, FALSE);
+	return TRUE;
 }
 
-void xf_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
+BOOL xf_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
 		BYTE* data, int width, int height, int bpp, int length,
 		BOOL compressed, int codecId)
 {
@@ -147,6 +152,8 @@ void xf_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
 	size = width * height * 4;
 
 	bitmap->data = (BYTE*) _aligned_malloc(size, 16);
+	if (!bitmap->data)
+		return FALSE;
 
 	pSrcData = data;
 	SrcSize = (UINT32) length;
@@ -156,14 +163,20 @@ void xf_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
 	{
 		if (bpp < 32)
 		{
-			freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_INTERLEAVED);
+			if (!freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_INTERLEAVED,
+											   xfc->settings->DesktopWidth,
+											   xfc->settings->DesktopHeight))
+				return FALSE;
 
 			status = interleaved_decompress(xfc->codecs->interleaved, pSrcData, SrcSize, bpp,
 					&pDstData, xfc->format, -1, 0, 0, width, height, xfc->palette);
 		}
 		else
 		{
-			freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_PLANAR);
+			if (!freerdp_client_codecs_prepare(xfc->codecs, FREERDP_CODEC_PLANAR,
+											   xfc->settings->DesktopWidth,
+											   xfc->settings->DesktopHeight))
+				return FALSE;
 
 			status = planar_decompress(xfc->codecs->planar, pSrcData, SrcSize,
 					&pDstData, xfc->format, -1, 0, 0, width, height, TRUE);
@@ -172,7 +185,7 @@ void xf_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
 		if (status < 0)
 		{
 			WLog_ERR(TAG, "Bitmap Decompression Failed");
-			return;
+			return FALSE;
 		}
 	}
 	else
@@ -186,9 +199,10 @@ void xf_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap,
 	bitmap->compressed = FALSE;
 	bitmap->length = size;
 	bitmap->bpp = (xfc->depth >= 24) ? 32 : xfc->depth;
+	return TRUE;
 }
 
-void xf_Bitmap_SetSurface(rdpContext* context, rdpBitmap* bitmap, BOOL primary)
+BOOL xf_Bitmap_SetSurface(rdpContext* context, rdpBitmap* bitmap, BOOL primary)
 {
 	xfContext* xfc = (xfContext*) context;
 
@@ -200,11 +214,12 @@ void xf_Bitmap_SetSurface(rdpContext* context, rdpBitmap* bitmap, BOOL primary)
 		xfc->drawing = ((xfBitmap*) bitmap)->pixmap;
 
 	xf_unlock_x11(xfc, FALSE);
+	return TRUE;
 }
 
 /* Pointer Class */
 
-void xf_Pointer_New(rdpContext* context, rdpPointer* pointer)
+BOOL xf_Pointer_New(rdpContext* context, rdpPointer* pointer)
 {
 #ifdef WITH_XCURSOR
 	XcursorImage ci;
@@ -220,16 +235,22 @@ void xf_Pointer_New(rdpContext* context, rdpPointer* pointer)
 	ci.xhot = pointer->xPos;
 	ci.yhot = pointer->yPos;
 
-	ci.pixels = (XcursorPixel*) calloc(1, ci.width * ci.height * 4);
-
-	if (!ci.pixels)
-		return;
-
-	if ((pointer->andMaskData != 0) && (pointer->xorMaskData != 0))
+	if (!(ci.pixels = (XcursorPixel*) calloc(1, ci.width * ci.height * 4)))
 	{
-		freerdp_image_copy_from_pointer_data((BYTE*) ci.pixels, PIXEL_FORMAT_ARGB32,
-				pointer->width * 4, 0, 0, pointer->width, pointer->height,
-				pointer->xorMaskData, pointer->andMaskData, pointer->xorBpp, xfc->palette);
+		xf_unlock_x11(xfc, FALSE);
+		return FALSE;
+	}
+
+	if (freerdp_image_copy_from_pointer_data(
+		    (BYTE*) ci.pixels, PIXEL_FORMAT_ARGB32,
+		    pointer->width * 4, 0, 0, pointer->width, pointer->height,
+		    pointer->xorMaskData, pointer->lengthXorMask,
+		    pointer->andMaskData, pointer->lengthAndMask,
+		    pointer->xorBpp, xfc->palette) < 0)
+	{
+		free(ci.pixels);
+		xf_unlock_x11(xfc, FALSE);
+		return FALSE;
 	}
 
 	((xfPointer*) pointer)->cursor = XcursorImageLoadCursor(xfc->display, &ci);
@@ -238,6 +259,7 @@ void xf_Pointer_New(rdpContext* context, rdpPointer* pointer)
 
 	xf_unlock_x11(xfc, FALSE);
 #endif
+	return TRUE;
 }
 
 void xf_Pointer_Free(rdpContext* context, rdpPointer* pointer)
@@ -254,7 +276,7 @@ void xf_Pointer_Free(rdpContext* context, rdpPointer* pointer)
 #endif
 }
 
-void xf_Pointer_Set(rdpContext* context, rdpPointer* pointer)
+BOOL xf_Pointer_Set(rdpContext* context, rdpPointer* pointer)
 {
 #ifdef WITH_XCURSOR
 	xfContext* xfc = (xfContext*) context;
@@ -270,9 +292,10 @@ void xf_Pointer_Set(rdpContext* context, rdpPointer* pointer)
 
 	xf_unlock_x11(xfc, FALSE);
 #endif
+	return TRUE;
 }
 
-void xf_Pointer_SetNull(rdpContext* context)
+BOOL xf_Pointer_SetNull(rdpContext* context)
 {
 #ifdef WITH_XCURSOR
 	xfContext* xfc = (xfContext*) context;
@@ -300,9 +323,10 @@ void xf_Pointer_SetNull(rdpContext* context)
 
 	xf_unlock_x11(xfc, FALSE);
 #endif
+	return TRUE;
 }
 
-void xf_Pointer_SetDefault(rdpContext* context)
+BOOL xf_Pointer_SetDefault(rdpContext* context)
 {
 #ifdef WITH_XCURSOR
 	xfContext* xfc = (xfContext*) context;
@@ -316,11 +340,43 @@ void xf_Pointer_SetDefault(rdpContext* context)
 
 	xf_unlock_x11(xfc, FALSE);
 #endif
+	return TRUE;
+}
+
+BOOL xf_Pointer_SetPosition(rdpContext* context, UINT32 x, UINT32 y)
+{
+	xfContext* xfc = (xfContext*) context;
+	XWindowAttributes current;
+	XSetWindowAttributes tmp;
+	BOOL ret = FALSE;
+
+	if (!xfc->focused || !xfc->window)
+		return TRUE;
+
+	xf_lock_x11(xfc, FALSE);
+
+	if (XGetWindowAttributes(xfc->display, xfc->window->handle, &current) == 0)
+		goto out;
+
+	tmp.event_mask = (current.your_event_mask & ~(PointerMotionMask));
+	if (XChangeWindowAttributes(xfc->display, xfc->window->handle, CWEventMask, &tmp) == 0)
+		goto out;
+
+	XWarpPointer(xfc->display, None, xfc->window->handle, 0, 0, 0, 0, x, y);
+
+	tmp.event_mask = current.your_event_mask;
+	XChangeWindowAttributes(xfc->display, xfc->window->handle, CWEventMask, &tmp);
+
+	ret = TRUE;
+out:
+	xf_unlock_x11(xfc, FALSE);
+	return ret;
+
 }
 
 /* Glyph Class */
 
-void xf_Glyph_New(rdpContext* context, rdpGlyph* glyph)
+BOOL xf_Glyph_New(rdpContext* context, rdpGlyph* glyph)
 {
 	int scanline;
 	XImage* image;
@@ -346,6 +402,7 @@ void xf_Glyph_New(rdpContext* context, rdpGlyph* glyph)
 	XFree(image);
 
 	xf_unlock_x11(xfc, FALSE);
+	return TRUE;
 }
 
 void xf_Glyph_Free(rdpContext* context, rdpGlyph* glyph)
@@ -360,7 +417,7 @@ void xf_Glyph_Free(rdpContext* context, rdpGlyph* glyph)
 	xf_unlock_x11(xfc, FALSE);
 }
 
-void xf_Glyph_Draw(rdpContext* context, rdpGlyph* glyph, int x, int y)
+BOOL xf_Glyph_Draw(rdpContext* context, rdpGlyph* glyph, int x, int y)
 {
 	xfGlyph* xf_glyph;
 	xfContext* xfc = (xfContext*) context;
@@ -375,14 +432,15 @@ void xf_Glyph_Draw(rdpContext* context, rdpGlyph* glyph, int x, int y)
 	XSetStipple(xfc->display, xfc->gc, xfc->bitmap_mono);
 
 	xf_unlock_x11(xfc, FALSE);
+	return TRUE;
 }
 
-void xf_Glyph_BeginDraw(rdpContext* context, int x, int y, int width, int height, UINT32 bgcolor, UINT32 fgcolor, BOOL fOpRedundant)
+BOOL xf_Glyph_BeginDraw(rdpContext* context, int x, int y, int width, int height, UINT32 bgcolor, UINT32 fgcolor, BOOL fOpRedundant)
 {
 	xfContext* xfc = (xfContext*) context;
 
-	bgcolor = freerdp_convert_gdi_order_color(bgcolor, context->settings->ColorDepth, xfc->format, xfc->palette);
-	fgcolor = freerdp_convert_gdi_order_color(fgcolor, context->settings->ColorDepth, xfc->format, xfc->palette);
+	bgcolor = xf_convert_rdp_order_color(xfc, bgcolor);
+	fgcolor = xf_convert_rdp_order_color(xfc, fgcolor);
 
 	xf_lock_x11(xfc, FALSE);
 
@@ -401,37 +459,42 @@ void xf_Glyph_BeginDraw(rdpContext* context, int x, int y, int width, int height
 	XSetFillStyle(xfc->display, xfc->gc, fOpRedundant ? FillOpaqueStippled : FillStippled);
 
 	xf_unlock_x11(xfc, FALSE);
+	return TRUE;
 }
 
-void xf_Glyph_EndDraw(rdpContext* context, int x, int y, int width, int height, UINT32 bgcolor, UINT32 fgcolor)
+BOOL xf_Glyph_EndDraw(rdpContext* context, int x, int y, int width, int height, UINT32 bgcolor, UINT32 fgcolor)
 {
 	xfContext* xfc = (xfContext*) context;
+	BOOL ret = TRUE;
 
 	xf_lock_x11(xfc, FALSE);
 
 	if (xfc->drawing == xfc->primary)
-	{
-		gdi_InvalidateRegion(xfc->hdc, x, y, width, height);
-	}
+		ret = gdi_InvalidateRegion(xfc->hdc, x, y, width, height);
 
 	xf_unlock_x11(xfc, FALSE);
+	return ret;
 }
 
 /* Graphics Module */
 
-void xf_register_graphics(rdpGraphics* graphics)
+BOOL xf_register_graphics(rdpGraphics* graphics)
 {
-	rdpBitmap* bitmap;
-	rdpPointer* pointer;
-	rdpGlyph* glyph;
+	rdpBitmap* bitmap = NULL;
+	rdpPointer* pointer = NULL;
+	rdpGlyph* glyph = NULL;
+	BOOL ret = FALSE;
 
-	bitmap = (rdpBitmap*) calloc(1, sizeof(rdpBitmap));
+	if (!(bitmap = (rdpBitmap*) calloc(1, sizeof(rdpBitmap))))
+		goto out;
 
-	if (!bitmap)
-		return;
+	if (!(pointer = (rdpPointer*) calloc(1, sizeof(rdpPointer))))
+		goto out;
+
+	if (!(glyph = (rdpGlyph*) calloc(1, sizeof(rdpGlyph))))
+		goto out;
 
 	bitmap->size = sizeof(xfBitmap);
-
 	bitmap->New = xf_Bitmap_New;
 	bitmap->Free = xf_Bitmap_Free;
 	bitmap->Paint = xf_Bitmap_Paint;
@@ -439,31 +502,18 @@ void xf_register_graphics(rdpGraphics* graphics)
 	bitmap->SetSurface = xf_Bitmap_SetSurface;
 
 	graphics_register_bitmap(graphics, bitmap);
-	free(bitmap);
-
-	pointer = (rdpPointer*) calloc(1, sizeof(rdpPointer));
-
-	if (!pointer)
-		return;
 
 	pointer->size = sizeof(xfPointer);
-
 	pointer->New = xf_Pointer_New;
 	pointer->Free = xf_Pointer_Free;
 	pointer->Set = xf_Pointer_Set;
 	pointer->SetNull = xf_Pointer_SetNull;
 	pointer->SetDefault = xf_Pointer_SetDefault;
+	pointer->SetPosition = xf_Pointer_SetPosition;
 
 	graphics_register_pointer(graphics, pointer);
-	free(pointer);
-
-	glyph = (rdpGlyph*) calloc(1, sizeof(rdpGlyph));
-
-	if (!glyph)
-		return;
 
 	glyph->size = sizeof(xfGlyph);
-
 	glyph->New = xf_Glyph_New;
 	glyph->Free = xf_Glyph_Free;
 	glyph->Draw = xf_Glyph_Draw;
@@ -471,5 +521,13 @@ void xf_register_graphics(rdpGraphics* graphics)
 	glyph->EndDraw = xf_Glyph_EndDraw;
 
 	graphics_register_glyph(graphics, glyph);
+
+	ret = TRUE;
+
+out:
+	free(bitmap);
+	free(pointer);
 	free(glyph);
+
+	return ret;
 }

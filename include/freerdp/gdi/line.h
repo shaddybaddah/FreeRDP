@@ -23,12 +23,20 @@
 #include <freerdp/api.h>
 #include <freerdp/gdi/gdi.h>
 
-FREERDP_API int gdi_LineTo(HGDI_DC hdc, int nXEnd, int nYEnd);
-FREERDP_API int gdi_PolylineTo(HGDI_DC hdc, GDI_POINT *lppt, int cCount);
-FREERDP_API int gdi_Polyline(HGDI_DC hdc, GDI_POINT *lppt, int cPoints);
-FREERDP_API int gdi_PolyPolyline(HGDI_DC hdc, GDI_POINT *lppt, int *lpdwPolyPoints, int cCount);
-FREERDP_API int gdi_MoveToEx(HGDI_DC hdc, int X, int Y, HGDI_POINT lpPoint);
+#ifdef __cplusplus
+ extern "C" {
+#endif
 
-typedef int (*p_LineTo)(HGDI_DC hdc, int nXEnd, int nYEnd);
+FREERDP_API BOOL gdi_LineTo(HGDI_DC hdc, int nXEnd, int nYEnd);
+FREERDP_API BOOL gdi_PolylineTo(HGDI_DC hdc, GDI_POINT *lppt, DWORD cCount);
+FREERDP_API BOOL gdi_Polyline(HGDI_DC hdc, GDI_POINT *lppt, int cPoints);
+FREERDP_API BOOL gdi_PolyPolyline(HGDI_DC hdc, GDI_POINT *lppt, int *lpdwPolyPoints, DWORD cCount);
+FREERDP_API BOOL gdi_MoveToEx(HGDI_DC hdc, int X, int Y, HGDI_POINT lpPoint);
+
+#ifdef __cplusplus
+ }
+#endif
+
+typedef BOOL (*p_LineTo)(HGDI_DC hdc, int nXEnd, int nYEnd);
 
 #endif /* FREERDP_GDI_LINE_H */

@@ -105,7 +105,7 @@ INLINE GDI_COLOR gdi_SetPixel(HGDI_DC hdc, int X, int Y, GDI_COLOR crColor)
 {
 	HGDI_BITMAP hBmp = (HGDI_BITMAP) hdc->selectedObject;
 	*((GDI_COLOR*)&(hBmp->data[(Y * hBmp->width * hdc->bytesPerPixel) + X * hdc->bytesPerPixel])) = crColor;
-	return 0;
+	return crColor;
 }
 
 INLINE void gdi_SetPixel_8bpp(HGDI_BITMAP hBmp, int X, int Y, BYTE pixel)
@@ -130,12 +130,23 @@ INLINE void gdi_SetPixel_32bpp(HGDI_BITMAP hBmp, int X, int Y, UINT32 pixel)
  * @param nHeight height
  * @param cBitsPerPixel bits per pixel
  * @param data pixel buffer
+ * @param fkt_free The function used for deallocation of the buffer, NULL for none.
  * @return new bitmap
  */
 
 HGDI_BITMAP gdi_CreateBitmap(int nWidth, int nHeight, int cBitsPerPixel, BYTE* data)
 {
-	HGDI_BITMAP hBitmap = (HGDI_BITMAP) malloc(sizeof(GDI_BITMAP));
+	return gdi_CreateBitmapEx(nWidth, nHeight, cBitsPerPixel, data, _aligned_free);
+}
+
+HGDI_BITMAP gdi_CreateBitmapEx(int nWidth, int nHeight, int cBitsPerPixel, BYTE* data,
+							void (*fkt_free)(void*))
+{
+	HGDI_BITMAP hBitmap = (HGDI_BITMAP) calloc(1, sizeof(GDI_BITMAP));
+
+	if (!hBitmap)
+		return NULL;
+
 	hBitmap->objectType = GDIOBJECT_BITMAP;
 	hBitmap->bitsPerPixel = cBitsPerPixel;
 	hBitmap->bytesPerPixel = (cBitsPerPixel + 1) / 8;
@@ -143,6 +154,8 @@ HGDI_BITMAP gdi_CreateBitmap(int nWidth, int nHeight, int cBitsPerPixel, BYTE* d
 	hBitmap->width = nWidth;
 	hBitmap->height = nHeight;
 	hBitmap->data = data;
+	hBitmap->free = fkt_free;
+
 	return hBitmap;
 }
 
@@ -157,7 +170,7 @@ HGDI_BITMAP gdi_CreateBitmap(int nWidth, int nHeight, int cBitsPerPixel, BYTE* d
 
 HGDI_BITMAP gdi_CreateCompatibleBitmap(HGDI_DC hdc, int nWidth, int nHeight)
 {
-	HGDI_BITMAP hBitmap = (HGDI_BITMAP) malloc(sizeof(GDI_BITMAP));
+	HGDI_BITMAP hBitmap = (HGDI_BITMAP) calloc(1, sizeof(GDI_BITMAP));
 
 	if (!hBitmap)
 		return NULL;
@@ -168,7 +181,14 @@ HGDI_BITMAP gdi_CreateCompatibleBitmap(HGDI_DC hdc, int nWidth, int nHeight)
 	hBitmap->width = nWidth;
 	hBitmap->height = nHeight;
 	hBitmap->data = _aligned_malloc(nWidth * nHeight * hBitmap->bytesPerPixel, 16);
+	hBitmap->free = _aligned_free;
+	if (!hBitmap->data)
+	{
+		free(hBitmap);
+		return NULL;
+	}
 	hBitmap->scanline = nWidth * hBitmap->bytesPerPixel;
+
 	return hBitmap;
 }
 
@@ -184,15 +204,15 @@ HGDI_BITMAP gdi_CreateCompatibleBitmap(HGDI_DC hdc, int nWidth, int nHeight)
  * @param nXSrc source x1
  * @param nYSrc source y1
  * @param rop raster operation code
- * @return 1 if successful, 0 otherwise
+ * @return 0 on failure, non-zero otherwise
  */
 
-int gdi_BitBlt(HGDI_DC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HGDI_DC hdcSrc, int nXSrc, int nYSrc, int rop)
+BOOL gdi_BitBlt(HGDI_DC hdcDest, int nXDest, int nYDest, int nWidth, int nHeight, HGDI_DC hdcSrc, int nXSrc, int nYSrc, DWORD rop)
 {
 	p_BitBlt _BitBlt = BitBlt_[IBPP(hdcDest->bitsPerPixel)];
 
-	if (_BitBlt != NULL)
-		return _BitBlt(hdcDest, nXDest, nYDest, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, rop);
-	else
-		return 0;
+	if (_BitBlt == NULL)
+		return FALSE;
+
+	return _BitBlt(hdcDest, nXDest, nYDest, nWidth, nHeight, hdcSrc, nXSrc, nYSrc, rop);
 }

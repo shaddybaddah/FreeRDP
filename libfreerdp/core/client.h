@@ -29,7 +29,6 @@
 #include <freerdp/svc.h>
 #include <freerdp/peer.h>
 #include <freerdp/addin.h>
-#include <freerdp/utils/event.h>
 
 #include <freerdp/client/channels.h>
 #include <freerdp/client/drdynvc.h>
@@ -97,12 +96,12 @@ struct rdp_channels
 	rdpSettings* settings;
 
 	/* true once freerdp_channels_post_connect is called */
-	int is_connected;
+	BOOL connected;
 
 	/* used for locating the channels for a given instance */
 	freerdp* instance;
 
-	wMessagePipe* MsgPipe;
+	wMessageQueue* queue;
 
 	DrdynvcClientContext* drdynvc;
 };

@@ -59,7 +59,7 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 	UINT32 i;
 	BOOL invert;
 	UINT32 x, y;
-	UINT32 count;
+	UINT32 count = 0;
 	UINT32 color;
 	int nXDstRel;
 	int nYDstRel;
@@ -169,7 +169,7 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 	subcodecByteCount = *((UINT32*) &pSrcData[offset + 8]);
 	offset += 12;
 
-	//WLog_DBG(TAG, "residualByteCount: %d bandsByteCount: %d subcodecByteCount: %d\n",
+	//WLog_DBG(TAG, "residualByteCount: %d bandsByteCount: %d subcodecByteCount: %d",
 	//		residualByteCount, bandsByteCount, subcodecByteCount);
 
 	if (residualByteCount > 0)
@@ -286,8 +286,8 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 			UINT32 vBarHeight;
 			UINT32 vBarPixelCount;
 			UINT32 vBarShortPixelCount;
-			CLEAR_VBAR_ENTRY* vBarEntry;
-			CLEAR_VBAR_ENTRY* vBarShortEntry;
+			CLEAR_VBAR_ENTRY* vBarEntry = NULL;
+			CLEAR_VBAR_ENTRY* vBarShortEntry = NULL;
 
 			if ((bandsByteCount - suboffset) < 11)
 				return -1021;
@@ -377,12 +377,13 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 
 					if (vBarShortEntry->count > vBarShortEntry->size)
 					{
+						UINT32 *tmp;
 						vBarShortEntry->size = vBarShortEntry->count;
 
-						if (!vBarShortEntry->pixels)
-							vBarShortEntry->pixels = (UINT32*) malloc(vBarShortEntry->count * 4);
-						else
-							vBarShortEntry->pixels = (UINT32*) realloc(vBarShortEntry->pixels, vBarShortEntry->count * 4);
+						tmp = (UINT32*) realloc(vBarShortEntry->pixels, vBarShortEntry->count * 4);
+						if (!tmp)
+							return -1;
+						vBarShortEntry->pixels = tmp;
 					}
 
 					if (!vBarShortEntry->pixels && vBarShortEntry->size)
@@ -442,12 +443,13 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 
 					if (vBarEntry->count > vBarEntry->size)
 					{
+						UINT32 *tmp;
 						vBarEntry->size = vBarEntry->count;
 
-						if (!vBarEntry->pixels)
-							vBarEntry->pixels = (UINT32*) malloc(vBarEntry->count * 4);
-						else
-							vBarEntry->pixels = (UINT32*) realloc(vBarEntry->pixels, vBarEntry->count * 4);
+						tmp = (UINT32*) realloc(vBarEntry->pixels, vBarEntry->count * 4);
+						if (!tmp)
+							return -1;
+						vBarEntry->pixels = tmp;
 					}
 
 					if (!vBarEntry->pixels && vBarEntry->size)
@@ -554,7 +556,7 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 			subcodecId = subcodecs[suboffset + 12];
 			suboffset += 13;
 
-			//WLog_DBG(TAG, "bitmapDataByteCount: %d subcodecByteCount: %d suboffset: %d subCodecId: %d\n",
+			//WLog_DBG(TAG, "bitmapDataByteCount: %d subcodecByteCount: %d suboffset: %d subCodecId: %d",
 			//		bitmapDataByteCount, subcodecByteCount, suboffset, subcodecId);
 
 			if ((subcodecByteCount - suboffset) < bitmapDataByteCount)
@@ -791,12 +793,13 @@ int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
 
 		if (glyphEntry->count > glyphEntry->size)
 		{
+			UINT32 *tmp;
 			glyphEntry->size = glyphEntry->count;
 
-			if (!glyphEntry->pixels)
-				glyphEntry->pixels = (UINT32*) malloc(glyphEntry->size * 4);
-			else
-				glyphEntry->pixels = (UINT32*) realloc(glyphEntry->pixels, glyphEntry->size * 4);
+			tmp = (UINT32*) realloc(glyphEntry->pixels, glyphEntry->size * 4);
+			if (!tmp)
+				return -1;
+			glyphEntry->pixels = tmp;
 		}
 
 		if (!glyphEntry->pixels)
@@ -827,12 +830,16 @@ int clear_compress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize, BYTE** 
 	return 1;
 }
 
-int clear_context_reset(CLEAR_CONTEXT* clear)
+BOOL clear_context_reset(CLEAR_CONTEXT* clear)
 {
+	if (!clear)
+		return FALSE;
+
 	clear->seqNumber = 0;
 	clear->VBarStorageCursor = 0;
 	clear->ShortVBarStorageCursor = 0;
-	return 1;
+
+	return TRUE;
 }
 
 CLEAR_CONTEXT* clear_context_new(BOOL Compressor)
@@ -841,24 +848,31 @@ CLEAR_CONTEXT* clear_context_new(BOOL Compressor)
 
 	clear = (CLEAR_CONTEXT*) calloc(1, sizeof(CLEAR_CONTEXT));
 
-	if (clear)
-	{
-		clear->Compressor = Compressor;
+	if (!clear)
+		return NULL;
 
-		clear->nsc = nsc_context_new();
+	clear->Compressor = Compressor;
 
-		if (!clear->nsc)
-			return NULL;
+	clear->nsc = nsc_context_new();
+	if (!clear->nsc)
+		goto error_nsc;
 
-		nsc_context_set_pixel_format(clear->nsc, RDP_PIXEL_FORMAT_R8G8B8);
+	nsc_context_set_pixel_format(clear->nsc, RDP_PIXEL_FORMAT_R8G8B8);
 
-		clear->TempSize = 512 * 512 * 4;
-		clear->TempBuffer = (BYTE*) malloc(clear->TempSize);
+	clear->TempSize = 512 * 512 * 4;
+	clear->TempBuffer = (BYTE*) malloc(clear->TempSize);
+	if (!clear->TempBuffer)
+		goto error_temp_buffer;
 
-		clear_context_reset(clear);
-	}
+	clear_context_reset(clear);
 
 	return clear;
+
+error_temp_buffer:
+	nsc_context_free(clear->nsc);
+error_nsc:
+	free(clear);
+	return NULL;
 }
 
 void clear_context_free(CLEAR_CONTEXT* clear)

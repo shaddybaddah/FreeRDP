@@ -38,22 +38,22 @@
 
 #define RDP_CLIENT_INPUT_PDU_HEADER_LENGTH	4
 
-void input_send_synchronize_event(rdpInput* input, UINT32 flags);
-void input_send_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
-void input_send_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
-void input_send_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
-void input_send_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
+BOOL input_send_synchronize_event(rdpInput* input, UINT32 flags);
+BOOL input_send_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
+BOOL input_send_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
+BOOL input_send_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
+BOOL input_send_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
 
-void input_send_fastpath_synchronize_event(rdpInput* input, UINT32 flags);
-void input_send_fastpath_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
-void input_send_fastpath_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
-void input_send_fastpath_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
-void input_send_fastpath_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
+BOOL input_send_fastpath_synchronize_event(rdpInput* input, UINT32 flags);
+BOOL input_send_fastpath_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
+BOOL input_send_fastpath_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code);
+BOOL input_send_fastpath_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
+BOOL input_send_fastpath_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y);
 
 BOOL input_recv(rdpInput* input, wStream* s);
 
 int input_process_events(rdpInput* input);
-void input_register_client_callbacks(rdpInput* input);
+BOOL input_register_client_callbacks(rdpInput* input);
 
 rdpInput* input_new(rdpRdp* rdp);
 void input_free(rdpInput* input);

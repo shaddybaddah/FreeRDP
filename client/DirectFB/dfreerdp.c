@@ -49,15 +49,22 @@ struct thread_data
 	freerdp* instance;
 };
 
-int df_context_new(freerdp* instance, rdpContext* context)
+BOOL df_context_new(freerdp* instance, rdpContext* context)
 {
-	context->channels = freerdp_channels_new();
-	return 0;
+	if (!(context->channels = freerdp_channels_new()))
+		return FALSE;
+
+	return TRUE;
 }
 
 void df_context_free(freerdp* instance, rdpContext* context)
 {
-
+	if (context && context->channels)
+	{
+		freerdp_channels_close(context->channels, instance);
+		freerdp_channels_free(context->channels);
+		context->channels = NULL;
+	}
 }
 
 void df_begin_paint(rdpContext* context)
@@ -170,11 +177,10 @@ BOOL df_pre_connect(freerdp* instance)
 	dfi->clrconv->palette = (rdpPalette*) malloc(sizeof(rdpPalette));
 	ZeroMemory(dfi->clrconv->palette, sizeof(rdpPalette));
 
-	freerdp_channels_pre_connect(instance->context->channels, instance);
+	if (freerdp_channels_pre_connect(instance->context->channels, instance) != CHANNEL_RC_OK)
+		return FALSE;
 
-	instance->context->cache = cache_new(instance->settings);
-
-	return TRUE;
+	return (instance->context->cache = cache_new(instance->settings)) != NULL;
 }
 
 BOOL df_post_connect(freerdp* instance)
@@ -186,7 +192,9 @@ BOOL df_post_connect(freerdp* instance)
 	context = ((dfContext*) instance->context);
 	dfi = context->dfi;
 
-	gdi_init(instance, CLRCONV_ALPHA | CLRCONV_INVERT | CLRBUF_16BPP | CLRBUF_32BPP, NULL);
+	if (!gdi_init(instance, CLRCONV_ALPHA | CLRCONV_INVERT | CLRBUF_16BPP | CLRBUF_32BPP, NULL))
+		return FALSE;
+
 	gdi = instance->context->gdi;
 
 	dfi->err = DirectFBCreate(&(dfi->dfb));
@@ -228,9 +236,7 @@ BOOL df_post_connect(freerdp* instance)
 	pointer_cache_register_callbacks(instance->update);
 	df_register_graphics(instance->context->graphics);
 
-	freerdp_channels_post_connect(instance->context->channels, instance);
-
-	return TRUE;
+	return freerdp_channels_post_connect(instance->context->channels, instance) == CHANNEL_RC_OK;
 }
 
 BOOL df_verify_certificate(freerdp* instance, char* subject, char* issuer, char* fingerprint)
@@ -404,6 +410,9 @@ int dfreerdp_run(freerdp* instance)
 		df_process_channel_event(channels, instance);
 	}
 
+	freerdp_channels_disconnect(channels, instance);
+	freerdp_disconnect(instance);
+
 	freerdp_channels_close(channels, instance);
 	freerdp_channels_free(channels);
 	df_free(dfi);
@@ -444,7 +453,11 @@ int main(int argc, char* argv[])
 
 	setlocale(LC_ALL, "");
 
-	g_sem = CreateSemaphore(NULL, 0, 1, NULL);
+	if (!(g_sem = CreateSemaphore(NULL, 0, 1, NULL)))
+	{
+		WLog_ERR(TAG, "Failed to create semaphore");
+		exit(1);
+	}
 
 	instance = freerdp_new();
 	instance->PreConnect = df_pre_connect;
@@ -455,7 +468,12 @@ int main(int argc, char* argv[])
 	instance->ContextSize = sizeof(dfContext);
 	instance->ContextNew = df_context_new;
 	instance->ContextFree = df_context_free;
-	freerdp_context_new(instance);
+
+	if (!freerdp_context_new(instance))
+	{
+		WLog_ERR(TAG, "Failed to create FreeRDP context");
+		exit(1);
+	}
 
 	context = (dfContext*) instance->context;
 	channels = instance->context->channels;
@@ -465,12 +483,13 @@ int main(int argc, char* argv[])
 	instance->context->argc = argc;
 	instance->context->argv = argv;
 
-	status = freerdp_client_settings_parse_command_line(instance->settings, argc, argv);
+	status = freerdp_client_settings_parse_command_line(instance->settings, argc, argv, FALSE);
 
 	if (status < 0)
 		exit(0);
 
-	freerdp_client_load_addins(instance->context->channels, instance->settings);
+	if (!freerdp_client_load_addins(instance->context->channels, instance->settings))
+		exit(-1);
 
 	data = (struct thread_data*) malloc(sizeof(struct thread_data));
 	ZeroMemory(data, sizeof(sizeof(struct thread_data)));
