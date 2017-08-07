@@ -202,7 +202,9 @@ static void VCAPITYPE VirtualChannelInitEvent(LPVOID pInitHandle, UINT event, LP
 	}
 }
 
-BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints) {
+#define VirtualChannelEntry	rdp2tcp_VirtualChannelEntry
+BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
+{
 	if (!initHandles)
 		initHandles = ListDictionary_New(TRUE);
 	if (!openHandles)

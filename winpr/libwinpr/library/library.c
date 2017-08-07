@@ -64,7 +64,7 @@
  * SizeofResource
  */
 
-#if !defined(_WIN32) || defined(_UWP)
+#if ( !defined(_WIN32) && !defined(__CYGWIN__) ) || defined(_UWP)
 
 #ifndef _WIN32
 
@@ -166,7 +166,7 @@ HMODULE LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags)
 
 #endif
 
-#ifndef _WIN32
+#if ( !defined(_WIN32) && !defined(__CYGWIN__) )
 
 FARPROC GetProcAddress(HMODULE hModule, LPCSTR lpProcName)
 {
