@@ -7,6 +7,7 @@
  * Copyright 2012-2013 Marc-Andre Moreau <marcandre.moreau@gmail.com>
  * Copyright 2015 Thincast Technologies GmbH
  * Copyright 2015 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
+ * Copyright 2016 David PHAM-VAN <d.phamvan@inuvika.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include <winpr/crt.h>
 #include <winpr/wlog.h>
@@ -51,7 +53,7 @@
 struct rdpsnd_plugin
 {
 	CHANNEL_DEF channelDef;
-	CHANNEL_ENTRY_POINTS_FREERDP channelEntryPoints;
+	CHANNEL_ENTRY_POINTS_FREERDP_EX channelEntryPoints;
 
 	HANDLE thread;
 	wStream* data_in;
@@ -72,6 +74,8 @@ struct rdpsnd_plugin
 
 	AUDIO_FORMAT* ClientFormats;
 	UINT16 NumberOfClientFormats;
+
+	BOOL attached;
 
 	BOOL expectingWave;
 	BYTE waveData[4];
@@ -99,7 +103,7 @@ struct rdpsnd_plugin
  */
 static UINT rdpsnd_confirm_wave(rdpsndPlugin* rdpsnd, RDPSND_WAVE* wave);
 
-static void* rdpsnd_schedule_thread(void* arg)
+static DWORD WINAPI rdpsnd_schedule_thread(LPVOID arg)
 {
 	wMessage message;
 	UINT16 wTimeDiff;
@@ -109,46 +113,43 @@ static void* rdpsnd_schedule_thread(void* arg)
 	rdpsndPlugin* rdpsnd = (rdpsndPlugin*) arg;
 	HANDLE events[2];
 	UINT error = CHANNEL_RC_OK;
-    DWORD status;
-
+	DWORD status;
 	events[0] = MessageQueue_Event(rdpsnd->MsgPipe->Out);
 	events[1] = rdpsnd->stopEvent;
 
 	while (1)
 	{
-	status = WaitForMultipleObjects(2, events, FALSE, INFINITE);
+		status = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
-	if (status == WAIT_FAILED)
-	{
-	    error = GetLastError();
-	    WLog_ERR(TAG, "WaitForMultipleObjects failed with error %lu!", error);
-	    break;
-	}
+		if (status == WAIT_FAILED)
+		{
+			error = GetLastError();
+			WLog_ERR(TAG, "WaitForMultipleObjects failed with error %"PRIu32"!", error);
+			break;
+		}
 
-	status = WaitForSingleObject(rdpsnd->stopEvent, 0);
+		status = WaitForSingleObject(rdpsnd->stopEvent, 0);
 
-	if (status == WAIT_FAILED)
-	{
-	    error = GetLastError();
-	    WLog_ERR(TAG, "WaitForSingleObject failed with error %lu!", error);
-	    break;
-	}
+		if (status == WAIT_FAILED)
+		{
+			error = GetLastError();
+			WLog_ERR(TAG, "WaitForSingleObject failed with error %"PRIu32"!", error);
+			break;
+		}
 
-	if (status == WAIT_OBJECT_0)
-	    break;
+		if (status == WAIT_OBJECT_0)
+			break;
 
+		status = WaitForSingleObject(events[0], 0);
 
-	status = WaitForSingleObject(events[0], 0);
+		if (status == WAIT_FAILED)
+		{
+			error = GetLastError();
+			WLog_ERR(TAG, "WaitForSingleObject failed with error %"PRIu32"!", error);
+			break;
+		}
 
-	if (status == WAIT_FAILED)
-	{
-	    error = GetLastError();
-	    WLog_ERR(TAG, "WaitForSingleObject failed with error %lu!", error);
-	    break;
-	}
-
-
-	if (!MessageQueue_Peek(rdpsnd->MsgPipe->Out, &message, TRUE))
+		if (!MessageQueue_Peek(rdpsnd->MsgPipe->Out, &message, TRUE))
 		{
 			WLog_ERR(TAG, "MessageQueue_Peek failed!");
 			error = ERROR_INTERNAL_ERROR;
@@ -179,10 +180,11 @@ static void* rdpsnd_schedule_thread(void* arg)
 	}
 
 	if (error && rdpsnd->rdpcontext)
-		setChannelError(rdpsnd->rdpcontext, error, "rdpsnd_schedule_thread reported an error");
+		setChannelError(rdpsnd->rdpcontext, error,
+		                "rdpsnd_schedule_thread reported an error");
 
-	ExitThread((DWORD)error);
-	return NULL;
+	ExitThread(error);
+	return error;
 }
 
 /**
@@ -190,24 +192,23 @@ static void* rdpsnd_schedule_thread(void* arg)
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT rdpsnd_send_quality_mode_pdu(rdpsndPlugin* rdpsnd)
+static UINT rdpsnd_send_quality_mode_pdu(rdpsndPlugin* rdpsnd)
 {
 	wStream* pdu;
-
 	pdu = Stream_New(NULL, 8);
+
 	if (!pdu)
 	{
 		WLog_ERR(TAG, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
+
 	Stream_Write_UINT8(pdu, SNDC_QUALITYMODE); /* msgType */
 	Stream_Write_UINT8(pdu, 0); /* bPad */
 	Stream_Write_UINT16(pdu, 4); /* BodySize */
 	Stream_Write_UINT16(pdu, rdpsnd->wQualityMode); /* wQualityMode */
 	Stream_Write_UINT16(pdu, 0); /* Reserved */
-
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "QualityMode: %d", rdpsnd->wQualityMode);
-
+	WLog_Print(rdpsnd->log, WLOG_DEBUG, "QualityMode: %"PRIu16"", rdpsnd->wQualityMode);
 	return rdpsnd_virtual_channel_write(rdpsnd, pdu);
 }
 
@@ -216,7 +217,6 @@ static void rdpsnd_select_supported_audio_formats(rdpsndPlugin* rdpsnd)
 	int index;
 	AUDIO_FORMAT* serverFormat;
 	AUDIO_FORMAT* clientFormat;
-
 	rdpsnd_free_audio_formats(rdpsnd->ClientFormats, rdpsnd->NumberOfClientFormats);
 	rdpsnd->NumberOfClientFormats = 0;
 	rdpsnd->ClientFormats = NULL;
@@ -224,24 +224,33 @@ static void rdpsnd_select_supported_audio_formats(rdpsndPlugin* rdpsnd)
 	if (!rdpsnd->NumberOfServerFormats)
 		return;
 
-	rdpsnd->ClientFormats = (AUDIO_FORMAT*) malloc(sizeof(AUDIO_FORMAT) * rdpsnd->NumberOfServerFormats);
+	rdpsnd->ClientFormats = (AUDIO_FORMAT*) calloc(
+	                            rdpsnd->NumberOfServerFormats,
+	                            sizeof(AUDIO_FORMAT));
+
+	if (!rdpsnd->ClientFormats)
+		return;
+
 	for (index = 0; index < (int) rdpsnd->NumberOfServerFormats; index++)
 	{
 		serverFormat = &rdpsnd->ServerFormats[index];
 
-		if (rdpsnd->fixedFormat > 0 && (rdpsnd->fixedFormat != serverFormat->wFormatTag))
+		if (rdpsnd->fixedFormat > 0
+		    && (rdpsnd->fixedFormat != serverFormat->wFormatTag))
 			continue;
 
-		if (rdpsnd->fixedChannel > 0 && (rdpsnd->fixedChannel != serverFormat->nChannels))
+		if (rdpsnd->fixedChannel > 0
+		    && (rdpsnd->fixedChannel != serverFormat->nChannels))
 			continue;
 
-		if (rdpsnd->fixedRate > 0 && (rdpsnd->fixedRate != serverFormat->nSamplesPerSec))
+		if (rdpsnd->fixedRate > 0
+		    && (rdpsnd->fixedRate != serverFormat->nSamplesPerSec))
 			continue;
 
-		if (rdpsnd->device && rdpsnd->device->FormatSupported(rdpsnd->device, serverFormat))
+		if (rdpsnd->device
+		    && rdpsnd->device->FormatSupported(rdpsnd->device, serverFormat))
 		{
 			clientFormat = &rdpsnd->ClientFormats[rdpsnd->NumberOfClientFormats++];
-
 			CopyMemory(clientFormat, serverFormat, sizeof(AUDIO_FORMAT));
 			clientFormat->cbSize = 0;
 
@@ -256,10 +265,12 @@ static void rdpsnd_select_supported_audio_formats(rdpsndPlugin* rdpsnd)
 
 #if 0
 	WLog_ERR(TAG,  "Server ");
-	rdpsnd_print_audio_formats(rdpsnd->ServerFormats, rdpsnd->NumberOfServerFormats);
+	rdpsnd_print_audio_formats(rdpsnd->ServerFormats,
+	                           rdpsnd->NumberOfServerFormats);
 	WLog_ERR(TAG,  "");
 	WLog_ERR(TAG,  "Client ");
-	rdpsnd_print_audio_formats(rdpsnd->ClientFormats, rdpsnd->NumberOfClientFormats);
+	rdpsnd_print_audio_formats(rdpsnd->ClientFormats,
+	                           rdpsnd->NumberOfClientFormats);
 	WLog_ERR(TAG,  "");
 #endif
 }
@@ -269,7 +280,7 @@ static void rdpsnd_select_supported_audio_formats(rdpsndPlugin* rdpsnd)
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
+static UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
 {
 	int index;
 	wStream* pdu;
@@ -279,7 +290,6 @@ UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
 	UINT16 dwVolumeRight;
 	UINT16 wNumberOfFormats;
 	AUDIO_FORMAT* clientFormat;
-
 	dwVolumeLeft = ((50 * 0xFFFF) / 100); /* 50% */
 	dwVolumeRight = ((50 * 0xFFFF) / 100); /* 50% */
 	dwVolume = (dwVolumeLeft << 16) | dwVolumeRight;
@@ -291,13 +301,13 @@ UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
 	}
 
 	wNumberOfFormats = rdpsnd->NumberOfClientFormats;
-
 	length = 4 + 20;
 
 	for (index = 0; index < (int) wNumberOfFormats; index++)
 		length += (18 + rdpsnd->ClientFormats[index].cbSize);
 
 	pdu = Stream_New(NULL, length);
+
 	if (!pdu)
 	{
 		WLog_ERR(TAG, "Stream_New failed!");
@@ -307,7 +317,6 @@ UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
 	Stream_Write_UINT8(pdu, SNDC_FORMATS); /* msgType */
 	Stream_Write_UINT8(pdu, 0); /* bPad */
 	Stream_Write_UINT16(pdu, length - 4); /* BodySize */
-
 	Stream_Write_UINT32(pdu, TSSNDCAPS_ALIVE | TSSNDCAPS_VOLUME); /* dwFlags */
 	Stream_Write_UINT32(pdu, dwVolume); /* dwVolume */
 	Stream_Write_UINT32(pdu, 0); /* dwPitch */
@@ -320,7 +329,6 @@ UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
 	for (index = 0; index < (int) wNumberOfFormats; index++)
 	{
 		clientFormat = &rdpsnd->ClientFormats[index];
-
 		Stream_Write_UINT16(pdu, clientFormat->wFormatTag);
 		Stream_Write_UINT16(pdu, clientFormat->nChannels);
 		Stream_Write_UINT32(pdu, clientFormat->nSamplesPerSec);
@@ -334,7 +342,6 @@ UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
 	}
 
 	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Client Audio Formats");
-
 	return rdpsnd_virtual_channel_write(rdpsnd, pdu);
 }
 
@@ -343,14 +350,14 @@ UINT rdpsnd_send_client_audio_formats(rdpsndPlugin* rdpsnd)
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT rdpsnd_recv_server_audio_formats_pdu(rdpsndPlugin* rdpsnd, wStream* s)
+static UINT rdpsnd_recv_server_audio_formats_pdu(rdpsndPlugin* rdpsnd,
+        wStream* s)
 {
 	int index;
 	UINT16 wVersion;
 	AUDIO_FORMAT* format;
 	UINT16 wNumberOfFormats;
 	UINT ret = ERROR_BAD_LENGTH;
-
 	rdpsnd_free_audio_formats(rdpsnd->ServerFormats, rdpsnd->NumberOfServerFormats);
 	rdpsnd->NumberOfServerFormats = 0;
 	rdpsnd->ServerFormats = NULL;
@@ -367,12 +374,14 @@ UINT rdpsnd_recv_server_audio_formats_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 	Stream_Read_UINT8(s, rdpsnd->cBlockNo); /* cLastBlockConfirmed */
 	Stream_Read_UINT16(s, wVersion); /* wVersion */
 	Stream_Seek_UINT8(s); /* bPad */
-
 	rdpsnd->NumberOfServerFormats = wNumberOfFormats;
+
 	if (Stream_GetRemainingLength(s) / 14 < wNumberOfFormats)
 		return ERROR_BAD_LENGTH;
 
-	rdpsnd->ServerFormats = (AUDIO_FORMAT*) calloc(wNumberOfFormats, sizeof(AUDIO_FORMAT));
+	rdpsnd->ServerFormats = (AUDIO_FORMAT*) calloc(wNumberOfFormats,
+	                        sizeof(AUDIO_FORMAT));
+
 	if (!rdpsnd->ServerFormats)
 		return CHANNEL_RC_NO_MEMORY;
 
@@ -382,6 +391,7 @@ UINT rdpsnd_recv_server_audio_formats_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 
 		if (Stream_GetRemainingLength(s) < 14)
 			goto out_fail;
+
 		Stream_Read_UINT16(s, format->wFormatTag); /* wFormatTag */
 		Stream_Read_UINT16(s, format->nChannels); /* nChannels */
 		Stream_Read_UINT32(s, format->nSamplesPerSec); /* nSamplesPerSec */
@@ -396,20 +406,21 @@ UINT rdpsnd_recv_server_audio_formats_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 				goto out_fail;
 
 			format->data = (BYTE*) malloc(format->cbSize);
+
 			if (!format->data)
 			{
 				ret = CHANNEL_RC_NO_MEMORY;
 				goto out_fail;
 			}
+
 			Stream_Read(s, format->data, format->cbSize);
 		}
 	}
 
 	rdpsnd_select_supported_audio_formats(rdpsnd);
-
 	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Server Audio Formats");
-
 	ret = rdpsnd_send_client_audio_formats(rdpsnd);
+
 	if (ret == CHANNEL_RC_OK)
 	{
 		if (wVersion >= 6)
@@ -417,8 +428,8 @@ UINT rdpsnd_recv_server_audio_formats_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 	}
 
 	return ret;
-
 out_fail:
+
 	for (index = 0; index < (int) wNumberOfFormats; index++)
 		free(format->data);
 
@@ -432,11 +443,12 @@ out_fail:
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT rdpsnd_send_training_confirm_pdu(rdpsndPlugin* rdpsnd, UINT16 wTimeStamp, UINT16 wPackSize)
+static UINT rdpsnd_send_training_confirm_pdu(rdpsndPlugin* rdpsnd,
+        UINT16 wTimeStamp, UINT16 wPackSize)
 {
 	wStream* pdu;
-
 	pdu = Stream_New(NULL, 8);
+
 	if (!pdu)
 	{
 		WLog_ERR(TAG, "Stream_New failed!");
@@ -448,10 +460,9 @@ UINT rdpsnd_send_training_confirm_pdu(rdpsndPlugin* rdpsnd, UINT16 wTimeStamp, U
 	Stream_Write_UINT16(pdu, 4); /* BodySize */
 	Stream_Write_UINT16(pdu, wTimeStamp);
 	Stream_Write_UINT16(pdu, wPackSize);
-
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Training Response: wTimeStamp: %d wPackSize: %d",
-			wTimeStamp, wPackSize);
-
+	WLog_Print(rdpsnd->log, WLOG_DEBUG,
+	           "Training Response: wTimeStamp: %"PRIu16" wPackSize: %"PRIu16"",
+	           wTimeStamp, wPackSize);
 	return rdpsnd_virtual_channel_write(rdpsnd, pdu);
 }
 
@@ -470,10 +481,9 @@ static UINT rdpsnd_recv_training_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 
 	Stream_Read_UINT16(s, wTimeStamp);
 	Stream_Read_UINT16(s, wPackSize);
-
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Training Request: wTimeStamp: %d wPackSize: %d",
-			wTimeStamp, wPackSize);
-
+	WLog_Print(rdpsnd->log, WLOG_DEBUG,
+	           "Training Request: wTimeStamp: %"PRIu16" wPackSize: %"PRIu16"",
+	           wTimeStamp, wPackSize);
 	return rdpsnd_send_training_confirm_pdu(rdpsnd, wTimeStamp, wPackSize);
 }
 
@@ -482,11 +492,11 @@ static UINT rdpsnd_recv_training_pdu(rdpsndPlugin* rdpsnd, wStream* s)
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rdpsnd_recv_wave_info_pdu(rdpsndPlugin* rdpsnd, wStream* s, UINT16 BodySize)
+static UINT rdpsnd_recv_wave_info_pdu(rdpsndPlugin* rdpsnd, wStream* s,
+                                      UINT16 BodySize)
 {
 	UINT16 wFormatNo;
 	AUDIO_FORMAT* format;
-
 	rdpsnd->expectingWave = TRUE;
 
 	if (Stream_GetRemainingLength(s) < 12)
@@ -497,13 +507,10 @@ static UINT rdpsnd_recv_wave_info_pdu(rdpsndPlugin* rdpsnd, wStream* s, UINT16 B
 	Stream_Read_UINT8(s, rdpsnd->cBlockNo);
 	Stream_Seek(s, 3); /* bPad */
 	Stream_Read(s, rdpsnd->waveData, 4);
-
 	rdpsnd->waveDataSize = BodySize - 8;
-
 	format = &rdpsnd->ClientFormats[wFormatNo];
-
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "WaveInfo: cBlockNo: %d wFormatNo: %d",
-			rdpsnd->cBlockNo, wFormatNo);
+	WLog_Print(rdpsnd->log, WLOG_DEBUG, "WaveInfo: cBlockNo: %"PRIu8" wFormatNo: %"PRIu16"",
+	           rdpsnd->cBlockNo, wFormatNo);
 
 	if (!rdpsnd->isOpen)
 	{
@@ -513,9 +520,9 @@ static UINT rdpsnd_recv_wave_info_pdu(rdpsndPlugin* rdpsnd, wStream* s, UINT16 B
 		//rdpsnd_print_audio_format(format);
 
 		if (rdpsnd->device && rdpsnd->device->Open &&
-			!rdpsnd->device->Open(rdpsnd->device, format, rdpsnd->latency))
+		    !rdpsnd->device->Open(rdpsnd->device, format, rdpsnd->latency))
 		{
-				return CHANNEL_RC_INITIALIZATION_ERROR;
+			return CHANNEL_RC_INITIALIZATION_ERROR;
 		}
 	}
 	else if (wFormatNo != rdpsnd->wCurrentFormatNo)
@@ -524,8 +531,9 @@ static UINT rdpsnd_recv_wave_info_pdu(rdpsndPlugin* rdpsnd, wStream* s, UINT16 B
 
 		if (rdpsnd->device)
 		{
-			if(rdpsnd->device->SetFormat && !rdpsnd->device->SetFormat(rdpsnd->device, format, rdpsnd->latency))
-					return CHANNEL_RC_INITIALIZATION_ERROR;
+			if (rdpsnd->device->SetFormat
+			    && !rdpsnd->device->SetFormat(rdpsnd->device, format, rdpsnd->latency))
+				return CHANNEL_RC_INITIALIZATION_ERROR;
 		}
 	}
 
@@ -537,11 +545,12 @@ static UINT rdpsnd_recv_wave_info_pdu(rdpsndPlugin* rdpsnd, wStream* s, UINT16 B
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT rdpsnd_send_wave_confirm_pdu(rdpsndPlugin* rdpsnd, UINT16 wTimeStamp, BYTE cConfirmedBlockNo)
+static UINT rdpsnd_send_wave_confirm_pdu(rdpsndPlugin* rdpsnd,
+        UINT16 wTimeStamp, BYTE cConfirmedBlockNo)
 {
 	wStream* pdu;
-
 	pdu = Stream_New(NULL, 8);
+
 	if (!pdu)
 	{
 		WLog_ERR(TAG, "Stream_New failed!");
@@ -554,7 +563,6 @@ UINT rdpsnd_send_wave_confirm_pdu(rdpsndPlugin* rdpsnd, UINT16 wTimeStamp, BYTE 
 	Stream_Write_UINT16(pdu, wTimeStamp);
 	Stream_Write_UINT8(pdu, cConfirmedBlockNo); /* cConfirmedBlockNo */
 	Stream_Write_UINT8(pdu, 0); /* bPad */
-
 	return rdpsnd_virtual_channel_write(rdpsnd, pdu);
 }
 
@@ -563,11 +571,11 @@ UINT rdpsnd_send_wave_confirm_pdu(rdpsndPlugin* rdpsnd, UINT16 wTimeStamp, BYTE 
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT rdpsnd_confirm_wave(rdpsndPlugin* rdpsnd, RDPSND_WAVE* wave)
+static UINT rdpsnd_confirm_wave(rdpsndPlugin* rdpsnd, RDPSND_WAVE* wave)
 {
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "WaveConfirm: cBlockNo: %d wTimeStamp: %d wTimeDiff: %d",
-			wave->cBlockNo, wave->wTimeStampB, wave->wTimeStampB - wave->wTimeStampA);
-
+	WLog_Print(rdpsnd->log, WLOG_DEBUG,
+	           "WaveConfirm: cBlockNo: %"PRIu8" wTimeStamp: %"PRIu16" wTimeDiff: %d",
+	           wave->cBlockNo, wave->wTimeStampB, wave->wTimeStampB - wave->wTimeStampA);
 	return rdpsnd_send_wave_confirm_pdu(rdpsnd, wave->wTimeStampB, wave->cBlockNo);
 }
 
@@ -576,19 +584,20 @@ UINT rdpsnd_confirm_wave(rdpsndPlugin* rdpsnd, RDPSND_WAVE* wave)
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rdpsnd_device_send_wave_confirm_pdu(rdpsndDevicePlugin* device, RDPSND_WAVE* wave)
+static UINT rdpsnd_device_send_wave_confirm_pdu(rdpsndDevicePlugin* device,
+        RDPSND_WAVE* wave)
 {
 	if (device->DisableConfirmThread)
 		return rdpsnd_confirm_wave(device->rdpsnd, wave);
 
-	if (!MessageQueue_Post(device->rdpsnd->MsgPipe->Out, NULL, 0, (void*) wave, NULL))
+	if (!MessageQueue_Post(device->rdpsnd->MsgPipe->Out, NULL, 0, (void*) wave,
+	                       NULL))
 	{
 		WLog_ERR(TAG, "MessageQueue_Post failed!");
 		return ERROR_INTERNAL_ERROR;
 	}
 
 	return CHANNEL_RC_OK;
-
 }
 
 /**
@@ -603,22 +612,18 @@ static UINT rdpsnd_recv_wave_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 	RDPSND_WAVE* wave;
 	AUDIO_FORMAT* format;
 	UINT status;
-
 	rdpsnd->expectingWave = FALSE;
-
 	/**
 	 * The Wave PDU is a special case: it is always sent after a Wave Info PDU,
 	 * and we do not process its header. Instead, the header is pad that needs
 	 * to be filled with the first four bytes of the audio sample data sent as
 	 * part of the preceding Wave Info PDU.
 	 */
-
 	CopyMemory(Stream_Buffer(s), rdpsnd->waveData, 4);
-
 	data = Stream_Buffer(s);
 	size = (int) Stream_Capacity(s);
-
 	wave = (RDPSND_WAVE*) calloc(1, sizeof(RDPSND_WAVE));
+
 	if (!wave)
 	{
 		WLog_ERR(TAG, "calloc failed!");
@@ -629,16 +634,13 @@ static UINT rdpsnd_recv_wave_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 	wave->wTimeStampA = rdpsnd->wTimeStamp;
 	wave->wFormatNo = rdpsnd->wCurrentFormatNo;
 	wave->cBlockNo = rdpsnd->cBlockNo;
-
 	wave->data = data;
 	wave->length = size;
 	wave->AutoConfirm = TRUE;
-
 	format = &rdpsnd->ClientFormats[rdpsnd->wCurrentFormatNo];
 	wave->wAudioLength = rdpsnd_compute_audio_time_length(format, size);
-
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Wave: cBlockNo: %d wTimeStamp: %d",
-			wave->cBlockNo, wave->wTimeStampA);
+	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Wave: cBlockNo: %"PRIu8" wTimeStamp: %"PRIu16"",
+	           wave->cBlockNo, wave->wTimeStampA);
 
 	if (!rdpsnd->device)
 	{
@@ -649,7 +651,8 @@ static UINT rdpsnd_recv_wave_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 		return status;
 	}
 
-	if (rdpsnd->device->WaveDecode && !rdpsnd->device->WaveDecode(rdpsnd->device, wave))
+	if (rdpsnd->device->WaveDecode
+	    && !rdpsnd->device->WaveDecode(rdpsnd->device, wave))
 	{
 		free(wave);
 		return CHANNEL_RC_NO_MEMORY;
@@ -671,8 +674,10 @@ static UINT rdpsnd_recv_wave_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 	}
 
 	status = CHANNEL_RC_OK;
+
 	if (wave->AutoConfirm)
 		status = rdpsnd->device->WaveConfirm(rdpsnd->device, wave);
+
 	return status;
 }
 
@@ -701,15 +706,15 @@ static UINT rdpsnd_recv_volume_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 		return ERROR_BAD_LENGTH;
 
 	Stream_Read_UINT32(s, dwVolume);
-
-	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Volume: 0x%04X", dwVolume);
+	WLog_Print(rdpsnd->log, WLOG_DEBUG, "Volume: 0x%08"PRIX32"", dwVolume);
 
 	if (rdpsnd->device && rdpsnd->device->SetVolume &&
-			!rdpsnd->device->SetVolume(rdpsnd->device, dwVolume))
+	    !rdpsnd->device->SetVolume(rdpsnd->device, dwVolume))
 	{
 		WLog_ERR(TAG, "error setting volume");
 		return CHANNEL_RC_INITIALIZATION_ERROR;
 	}
+
 	return CHANNEL_RC_OK;
 }
 
@@ -740,7 +745,10 @@ static UINT rdpsnd_recv_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 	Stream_Seek_UINT8(s); /* bPad */
 	Stream_Read_UINT16(s, BodySize);
 
-	//WLog_ERR(TAG,  "msgType %d BodySize %d", msgType, BodySize);
+	if (!rdpsnd->attached)
+		goto out;
+
+	//WLog_ERR(TAG,  "msgType %"PRIu8" BodySize %"PRIu16"", msgType, BodySize);
 
 	switch (msgType)
 	{
@@ -765,7 +773,7 @@ static UINT rdpsnd_recv_pdu(rdpsndPlugin* rdpsnd, wStream* s)
 			break;
 
 		default:
-			WLog_ERR(TAG, "unknown msgType %d", msgType);
+			WLog_ERR(TAG, "unknown msgType %"PRIu8"", msgType);
 			break;
 	}
 
@@ -774,7 +782,8 @@ out:
 	return status;
 }
 
-static void rdpsnd_register_device_plugin(rdpsndPlugin* rdpsnd, rdpsndDevicePlugin* device)
+static void rdpsnd_register_device_plugin(rdpsndPlugin* rdpsnd,
+        rdpsndDevicePlugin* device)
 {
 	if (rdpsnd->device)
 	{
@@ -784,7 +793,6 @@ static void rdpsnd_register_device_plugin(rdpsndPlugin* rdpsnd, rdpsndDevicePlug
 
 	rdpsnd->device = device;
 	device->rdpsnd = rdpsnd;
-
 	device->WaveConfirm = rdpsnd_device_send_wave_confirm_pdu;
 }
 
@@ -793,13 +801,14 @@ static void rdpsnd_register_device_plugin(rdpsndPlugin* rdpsnd, rdpsndDevicePlug
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rdpsnd_load_device_plugin(rdpsndPlugin* rdpsnd, const char* name, ADDIN_ARGV* args)
+static UINT rdpsnd_load_device_plugin(rdpsndPlugin* rdpsnd, const char* name,
+                                      ADDIN_ARGV* args)
 {
 	PFREERDP_RDPSND_DEVICE_ENTRY entry;
-	FREERDP_RDPSND_DEVICE_ENTRY_POINTS entryPoints;\
+	FREERDP_RDPSND_DEVICE_ENTRY_POINTS entryPoints;
 	UINT error;
-
-	entry = (PFREERDP_RDPSND_DEVICE_ENTRY) freerdp_load_channel_addin_entry("rdpsnd", (LPSTR) name, NULL, 0);
+	entry = (PFREERDP_RDPSND_DEVICE_ENTRY)
+	        freerdp_load_channel_addin_entry("rdpsnd", (LPSTR) name, NULL, 0);
 
 	if (!entry)
 		return ERROR_INTERNAL_ERROR;
@@ -809,13 +818,13 @@ static UINT rdpsnd_load_device_plugin(rdpsndPlugin* rdpsnd, const char* name, AD
 	entryPoints.args = args;
 
 	if ((error = entry(&entryPoints)))
-		WLog_ERR(TAG, "%s entry returns error %lu", name, error);
+		WLog_ERR(TAG, "%s entry returns error %"PRIu32"", name, error);
 
 	WLog_INFO(TAG, "Loaded %s backend for rdpsnd", name);
 	return error;
 }
 
-BOOL rdpsnd_set_subsystem(rdpsndPlugin* rdpsnd, const char* subsystem)
+static BOOL rdpsnd_set_subsystem(rdpsndPlugin* rdpsnd, const char* subsystem)
 {
 	free(rdpsnd->subsystem);
 	rdpsnd->subsystem = _strdup(subsystem);
@@ -851,20 +860,19 @@ static UINT rdpsnd_process_addin_args(rdpsndPlugin* rdpsnd, ADDIN_ARGV* args)
 	int status;
 	DWORD flags;
 	COMMAND_LINE_ARGUMENT_A* arg;
-
 	rdpsnd->wQualityMode = HIGH_QUALITY; /* default quality mode */
-
 
 	if (args->argc > 1)
 	{
 		flags = COMMAND_LINE_SIGIL_NONE | COMMAND_LINE_SEPARATOR_COLON;
-		status = CommandLineParseArgumentsA(args->argc, (const char **) args->argv,
-					rdpsnd_args, flags, rdpsnd, NULL, NULL);
+		status = CommandLineParseArgumentsA(args->argc, (const char**) args->argv,
+		                                    rdpsnd_args, flags, rdpsnd, NULL, NULL);
 
 		if (status < 0)
 			return CHANNEL_RC_INITIALIZATION_ERROR;
 
 		arg = rdpsnd_args;
+		errno = 0;
 
 		do
 		{
@@ -872,7 +880,6 @@ static UINT rdpsnd_process_addin_args(rdpsndPlugin* rdpsnd, ADDIN_ARGV* args)
 				continue;
 
 			CommandLineSwitchStart(arg)
-
 			CommandLineSwitchCase(arg, "sys")
 			{
 				if (!rdpsnd_set_subsystem(rdpsnd, arg->Value))
@@ -885,23 +892,43 @@ static UINT rdpsnd_process_addin_args(rdpsndPlugin* rdpsnd, ADDIN_ARGV* args)
 			}
 			CommandLineSwitchCase(arg, "format")
 			{
-				rdpsnd->fixedFormat = atoi(arg->Value);
+				unsigned long val = strtoul(arg->Value, NULL, 0);
+
+				if ((errno != 0) || (val > UINT16_MAX))
+					return CHANNEL_RC_INITIALIZATION_ERROR;
+
+				rdpsnd->fixedFormat = val;
 			}
 			CommandLineSwitchCase(arg, "rate")
 			{
-				rdpsnd->fixedRate = atoi(arg->Value);
+				unsigned long val = strtoul(arg->Value, NULL, 0);
+
+				if ((errno != 0) || (val > UINT32_MAX))
+					return CHANNEL_RC_INITIALIZATION_ERROR;
+
+				rdpsnd->fixedRate = val;
 			}
 			CommandLineSwitchCase(arg, "channel")
 			{
-				rdpsnd->fixedChannel = atoi(arg->Value);
+				unsigned long val = strtoul(arg->Value, NULL, 0);
+
+				if ((errno != 0) || (val > UINT16_MAX))
+					return CHANNEL_RC_INITIALIZATION_ERROR;
+
+				rdpsnd->fixedChannel = val;
 			}
 			CommandLineSwitchCase(arg, "latency")
 			{
-				rdpsnd->latency = atoi(arg->Value);
+				unsigned long val = strtoul(arg->Value, NULL, 0);
+
+				if ((errno != 0) || (val > INT32_MAX))
+					return CHANNEL_RC_INITIALIZATION_ERROR;
+
+				rdpsnd->latency = val;
 			}
 			CommandLineSwitchCase(arg, "quality")
 			{
-				int wQualityMode = DYNAMIC_QUALITY;
+				long wQualityMode = DYNAMIC_QUALITY;
 
 				if (_stricmp(arg->Value, "dynamic") == 0)
 					wQualityMode = DYNAMIC_QUALITY;
@@ -910,7 +937,12 @@ static UINT rdpsnd_process_addin_args(rdpsndPlugin* rdpsnd, ADDIN_ARGV* args)
 				else if (_stricmp(arg->Value, "high") == 0)
 					wQualityMode = HIGH_QUALITY;
 				else
-					wQualityMode = atoi(arg->Value);
+				{
+					wQualityMode = strtol(arg->Value, NULL, 0);
+
+					if (errno != 0)
+						return CHANNEL_RC_INITIALIZATION_ERROR;
+				}
 
 				if ((wQualityMode < 0) || (wQualityMode > 2))
 					wQualityMode = DYNAMIC_QUALITY;
@@ -919,9 +951,7 @@ static UINT rdpsnd_process_addin_args(rdpsndPlugin* rdpsnd, ADDIN_ARGV* args)
 			}
 			CommandLineSwitchDefault(arg)
 			{
-
 			}
-
 			CommandLineSwitchEnd(arg)
 		}
 		while ((arg = CommandLineFindNextArgumentA(arg)) != NULL);
@@ -939,14 +969,14 @@ static UINT rdpsnd_process_connect(rdpsndPlugin* rdpsnd)
 {
 	ADDIN_ARGV* args;
 	UINT status = ERROR_INTERNAL_ERROR;
-	char *subsystem_name = NULL, *device_name = NULL;
-
+	char* subsystem_name = NULL, *device_name = NULL;
 	rdpsnd->latency = -1;
-
 	args = (ADDIN_ARGV*) rdpsnd->channelEntryPoints.pExtendedData;
+
 	if (args)
 	{
 		status = rdpsnd_process_addin_args(rdpsnd, args);
+
 		if (status != CHANNEL_RC_OK)
 			return status;
 	}
@@ -958,88 +988,112 @@ static UINT rdpsnd_process_connect(rdpsndPlugin* rdpsnd)
 
 		if ((status = rdpsnd_load_device_plugin(rdpsnd, rdpsnd->subsystem, args)))
 		{
-			WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", rdpsnd->subsystem, status);
+			WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+			         rdpsnd->subsystem, status);
 			return status;
 		}
 	}
 	else
 	{
 #if defined(WITH_IOSAUDIO)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "ios";
 			device_name = "";
-			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
-		}
-#endif
 
+			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
+		}
+
+#endif
 #if defined(WITH_OPENSLES)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "opensles";
 			device_name = "";
-			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
-		}
-#endif
 
+			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
+		}
+
+#endif
 #if defined(WITH_PULSE)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "pulse";
 			device_name = "";
-			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
-		}
-#endif
 
+			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
+		}
+
+#endif
 #if defined(WITH_ALSA)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "alsa";
 			device_name = "default";
-			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
-		}
-#endif
 
+			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
+		}
+
+#endif
 #if defined(WITH_OSS)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "oss";
 			device_name = "";
+
 			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
 		}
+
 #endif
-
-
 #if defined(WITH_MACAUDIO)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "mac";
 			device_name = "default";
-			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
-		}
-#endif
 
+			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
+		}
+
+#endif
 #if defined(WITH_WINMM)
+
 		if (!rdpsnd->device)
 		{
 			subsystem_name = "winmm";
 			device_name = "";
+
 			if ((status = rdpsnd_load_device_plugin(rdpsnd, subsystem_name, args)))
-				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %lu", subsystem_name, status);
+				WLog_ERR(TAG, "unable to load the %s subsystem plugin because of error %"PRIu32"",
+				         subsystem_name, status);
 		}
+
 #endif
+
 		if (status)
 			return status;
 
 		if (rdpsnd->device)
 		{
-			if (!rdpsnd_set_subsystem(rdpsnd, subsystem_name) || !rdpsnd_set_device_name(rdpsnd, device_name))
+			if (!rdpsnd_set_subsystem(rdpsnd, subsystem_name)
+			    || !rdpsnd_set_device_name(rdpsnd, device_name))
 				return CHANNEL_RC_NO_MEMORY;
 		}
 	}
@@ -1050,10 +1104,10 @@ static UINT rdpsnd_process_connect(rdpsndPlugin* rdpsnd)
 		return CHANNEL_RC_INITIALIZATION_ERROR;
 	}
 
-
 	if (!rdpsnd->device->DisableConfirmThread)
 	{
 		rdpsnd->stopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+
 		if (!rdpsnd->stopEvent)
 		{
 			WLog_ERR(TAG, "CreateEvent failed!");
@@ -1061,8 +1115,9 @@ static UINT rdpsnd_process_connect(rdpsndPlugin* rdpsnd)
 		}
 
 		rdpsnd->ScheduleThread = CreateThread(NULL, 0,
-			(LPTHREAD_START_ROUTINE) rdpsnd_schedule_thread,
-			(void*) rdpsnd, 0, NULL);
+											  rdpsnd_schedule_thread,
+		                                      (void*) rdpsnd, 0, NULL);
+
 		if (!rdpsnd->ScheduleThread)
 		{
 			WLog_ERR(TAG, "CreateThread failed!");
@@ -1078,81 +1133,15 @@ static void rdpsnd_process_disconnect(rdpsndPlugin* rdpsnd)
 	if (rdpsnd->ScheduleThread)
 	{
 		SetEvent(rdpsnd->stopEvent);
+
 		if (WaitForSingleObject(rdpsnd->ScheduleThread, INFINITE) == WAIT_FAILED)
-	{
-	    WLog_ERR(TAG, "WaitForSingleObject failed with error %lu!", GetLastError());
-	    return;
-	}
+		{
+			WLog_ERR(TAG, "WaitForSingleObject failed with error %"PRIu32"!", GetLastError());
+			return;
+		}
+
 		CloseHandle(rdpsnd->ScheduleThread);
 		CloseHandle(rdpsnd->stopEvent);
-	}
-}
-
-/****************************************************************************************/
-
-
-static wListDictionary* g_InitHandles = NULL;
-static wListDictionary* g_OpenHandles = NULL;
-
-BOOL rdpsnd_add_init_handle_data(void* pInitHandle, void* pUserData)
-{
-	if (!g_InitHandles)
-	{
-		g_InitHandles = ListDictionary_New(TRUE);
-		if (!g_InitHandles)
-			return FALSE;
-	}
-
-	return ListDictionary_Add(g_InitHandles, pInitHandle, pUserData);
-}
-
-void* rdpsnd_get_init_handle_data(void* pInitHandle)
-{
-	void* pUserData = NULL;
-	pUserData = ListDictionary_GetItemValue(g_InitHandles, pInitHandle);
-	return pUserData;
-}
-
-void rdpsnd_remove_init_handle_data(void* pInitHandle)
-{
-	ListDictionary_Remove(g_InitHandles, pInitHandle);
-	if (ListDictionary_Count(g_InitHandles) < 1)
-	{
-		ListDictionary_Free(g_InitHandles);
-		g_InitHandles = NULL;
-	}
-}
-
-BOOL rdpsnd_add_open_handle_data(DWORD openHandle, void* pUserData)
-{
-	void* pOpenHandle = (void*) (size_t) openHandle;
-
-	if (!g_OpenHandles)
-	{
-		g_OpenHandles = ListDictionary_New(TRUE);
-		if (!g_OpenHandles)
-			return FALSE;
-	}
-
-	return ListDictionary_Add(g_OpenHandles, pOpenHandle, pUserData);
-}
-
-void* rdpsnd_get_open_handle_data(DWORD openHandle)
-{
-	void* pUserData = NULL;
-	void* pOpenHandle = (void*) (size_t) openHandle;
-	pUserData = ListDictionary_GetItemValue(g_OpenHandles, pOpenHandle);
-	return pUserData;
-}
-
-void rdpsnd_remove_open_handle_data(DWORD openHandle)
-{
-	void* pOpenHandle = (void*) (size_t) openHandle;
-	ListDictionary_Remove(g_OpenHandles, pOpenHandle);
-	if (ListDictionary_Count(g_OpenHandles) < 1)
-	{
-		ListDictionary_Free(g_OpenHandles);
-		g_OpenHandles = NULL;
 	}
 }
 
@@ -1171,15 +1160,15 @@ UINT rdpsnd_virtual_channel_write(rdpsndPlugin* rdpsnd, wStream* s)
 	}
 	else
 	{
-		status = rdpsnd->channelEntryPoints.pVirtualChannelWrite(rdpsnd->OpenHandle,
-			Stream_Buffer(s), (UINT32) Stream_GetPosition(s), s);
+		status = rdpsnd->channelEntryPoints.pVirtualChannelWriteEx(rdpsnd->InitHandle, rdpsnd->OpenHandle,
+		         Stream_Buffer(s), (UINT32) Stream_GetPosition(s), s);
 	}
 
 	if (status != CHANNEL_RC_OK)
 	{
 		Stream_Free(s, TRUE);
-		WLog_ERR(TAG,  "VirtualChannelWrite failed with %s [%08X]",
-				 WTSErrorToString(status), status);
+		WLog_ERR(TAG,  "pVirtualChannelWriteEx failed with %s [%08"PRIX32"]",
+		         WTSErrorToString(status), status);
 	}
 
 	return status;
@@ -1191,7 +1180,7 @@ UINT rdpsnd_virtual_channel_write(rdpsndPlugin* rdpsnd, wStream* s)
  * @return 0 on success, otherwise a Win32 error code
  */
 static UINT rdpsnd_virtual_channel_event_data_received(rdpsndPlugin* plugin,
-		void* pData, UINT32 dataLength, UINT32 totalLength, UINT32 dataFlags)
+        void* pData, UINT32 dataLength, UINT32 totalLength, UINT32 dataFlags)
 {
 	wStream* s;
 
@@ -1206,6 +1195,7 @@ static UINT rdpsnd_virtual_channel_event_data_received(rdpsndPlugin* plugin,
 			Stream_Free(plugin->data_in, TRUE);
 
 		plugin->data_in = Stream_New(NULL, totalLength);
+
 		if (!plugin->data_in)
 		{
 			WLog_ERR(TAG,  "Stream_New failed!");
@@ -1241,28 +1231,31 @@ static UINT rdpsnd_virtual_channel_event_data_received(rdpsndPlugin* plugin,
 			return ERROR_INTERNAL_ERROR;
 		}
 	}
+
 	return CHANNEL_RC_OK;
 }
 
-static VOID VCAPITYPE rdpsnd_virtual_channel_open_event(DWORD openHandle, UINT event,
-		LPVOID pData, UINT32 dataLength, UINT32 totalLength, UINT32 dataFlags)
+static VOID VCAPITYPE rdpsnd_virtual_channel_open_event_ex(LPVOID lpUserParam, DWORD openHandle,
+        UINT event,
+        LPVOID pData, UINT32 dataLength, UINT32 totalLength, UINT32 dataFlags)
 {
-	rdpsndPlugin* rdpsnd;
 	UINT error = CHANNEL_RC_OK;
+	rdpsndPlugin* rdpsnd = (rdpsndPlugin*) lpUserParam;
 
-	rdpsnd = (rdpsndPlugin*) rdpsnd_get_open_handle_data(openHandle);
-
-	if (!rdpsnd)
+	if (!rdpsnd || (rdpsnd->OpenHandle != openHandle))
 	{
-		WLog_ERR(TAG,  "rdpsnd_virtual_channel_open_event: error no match");
+		WLog_ERR(TAG,  "error no match");
 		return;
 	}
 
 	switch (event)
 	{
 		case CHANNEL_EVENT_DATA_RECEIVED:
-			if ((error = rdpsnd_virtual_channel_event_data_received(rdpsnd, pData, dataLength, totalLength, dataFlags)))
-				WLog_ERR(TAG, "rdpsnd_virtual_channel_event_data_received failed with error %lu", error);
+			if ((error = rdpsnd_virtual_channel_event_data_received(rdpsnd, pData,
+			             dataLength, totalLength, dataFlags)))
+				WLog_ERR(TAG,
+				         "rdpsnd_virtual_channel_event_data_received failed with error %"PRIu32"", error);
+
 			break;
 
 		case CHANNEL_EVENT_WRITE_COMPLETE:
@@ -1272,12 +1265,13 @@ static VOID VCAPITYPE rdpsnd_virtual_channel_open_event(DWORD openHandle, UINT e
 		case CHANNEL_EVENT_USER:
 			break;
 	}
-	if (error && rdpsnd->rdpcontext)
-		setChannelError(rdpsnd->rdpcontext, error, "rdpsnd_virtual_channel_open_event reported an error");
 
+	if (error && rdpsnd->rdpcontext)
+		setChannelError(rdpsnd->rdpcontext, error,
+		                "rdpsnd_virtual_channel_open_event_ex reported an error");
 }
 
-static void* rdpsnd_virtual_channel_client_thread(void* arg)
+static DWORD WINAPI rdpsnd_virtual_channel_client_thread(LPVOID arg)
 {
 	wStream* data;
 	wMessage message;
@@ -1312,6 +1306,7 @@ static void* rdpsnd_virtual_channel_client_thread(void* arg)
 		if (message.id == 0)
 		{
 			data = (wStream*) message.wParam;
+
 			if ((error = rdpsnd_recv_pdu(rdpsnd, data)))
 			{
 				WLog_ERR(TAG, "error treating sound channel message");
@@ -1321,13 +1316,14 @@ static void* rdpsnd_virtual_channel_client_thread(void* arg)
 	}
 
 out:
+
 	if (error && rdpsnd->rdpcontext)
-		setChannelError(rdpsnd->rdpcontext, error, "rdpsnd_virtual_channel_client_thread reported an error");
+		setChannelError(rdpsnd->rdpcontext, error,
+		                "rdpsnd_virtual_channel_client_thread reported an error");
 
 	rdpsnd_process_disconnect(rdpsnd);
-
-	ExitThread((DWORD)error);
-	return NULL;
+	ExitThread(error);
+	return error;
 }
 
 /**
@@ -1335,40 +1331,38 @@ out:
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rdpsnd_virtual_channel_event_connected(rdpsndPlugin* plugin, LPVOID pData, UINT32 dataLength)
+static UINT rdpsnd_virtual_channel_event_connected(rdpsndPlugin* rdpsnd,
+        LPVOID pData, UINT32 dataLength)
 {
 	UINT32 status;
-
-	status = plugin->channelEntryPoints.pVirtualChannelOpen(plugin->InitHandle,
-		&plugin->OpenHandle, plugin->channelDef.name, rdpsnd_virtual_channel_open_event);
+	status = rdpsnd->channelEntryPoints.pVirtualChannelOpenEx(rdpsnd->InitHandle,
+	         &rdpsnd->OpenHandle, rdpsnd->channelDef.name,
+	         rdpsnd_virtual_channel_open_event_ex);
 
 	if (status != CHANNEL_RC_OK)
 	{
-		WLog_ERR(TAG, "pVirtualChannelOpen failed with %s [%08X]",
-				 WTSErrorToString(status), status);
+		WLog_ERR(TAG, "pVirtualChannelOpenEx failed with %s [%08"PRIX32"]",
+		         WTSErrorToString(status), status);
 		return status;
 	}
 
-	if (!rdpsnd_add_open_handle_data(plugin->OpenHandle, plugin))
-	{
-		WLog_ERR(TAG, "unable to register opened handle");
-		return  ERROR_INTERNAL_ERROR;
-	}
+	rdpsnd->MsgPipe = MessagePipe_New();
 
-	plugin->MsgPipe = MessagePipe_New();
-	if (!plugin->MsgPipe)
+	if (!rdpsnd->MsgPipe)
 	{
 		WLog_ERR(TAG, "unable to create message pipe");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	plugin->thread = CreateThread(NULL, 0,
-			(LPTHREAD_START_ROUTINE) rdpsnd_virtual_channel_client_thread, (void*) plugin, 0, NULL);
-	if (!plugin->thread)
+	rdpsnd->thread = CreateThread(NULL, 0,
+								  rdpsnd_virtual_channel_client_thread, (void*) rdpsnd,
+	                              0, NULL);
+
+	if (!rdpsnd->thread)
 	{
 		WLog_ERR(TAG, "unable to create thread");
-		MessagePipe_Free(plugin->MsgPipe);
-		plugin->MsgPipe = NULL;
+		MessagePipe_Free(rdpsnd->MsgPipe);
+		rdpsnd->MsgPipe = NULL;
 		return ERROR_INTERNAL_ERROR;
 	}
 
@@ -1383,25 +1377,27 @@ static UINT rdpsnd_virtual_channel_event_connected(rdpsndPlugin* plugin, LPVOID 
 static UINT rdpsnd_virtual_channel_event_disconnected(rdpsndPlugin* rdpsnd)
 {
 	UINT error;
-
 	MessagePipe_PostQuit(rdpsnd->MsgPipe, 0);
+
 	if (WaitForSingleObject(rdpsnd->thread, INFINITE) == WAIT_FAILED)
-    {
-	error = GetLastError();
-	WLog_ERR(TAG, "WaitForSingleObject failed with error %lu!", error);
-	return error;
-    }
+	{
+		error = GetLastError();
+		WLog_ERR(TAG, "WaitForSingleObject failed with error %"PRIu32"!", error);
+		return error;
+	}
 
 	CloseHandle(rdpsnd->thread);
 	rdpsnd->thread = NULL;
+	error = rdpsnd->channelEntryPoints.pVirtualChannelCloseEx(rdpsnd->InitHandle, rdpsnd->OpenHandle);
 
-	error = rdpsnd->channelEntryPoints.pVirtualChannelClose(rdpsnd->OpenHandle);
 	if (CHANNEL_RC_OK != error)
 	{
-		WLog_ERR(TAG, "pVirtualChannelClose failed with %s [%08X]",
-				 WTSErrorToString(error), error);
+		WLog_ERR(TAG, "pVirtualChannelCloseEx failed with %s [%08"PRIX32"]",
+		         WTSErrorToString(error), error);
 		return error;
 	}
+
+	rdpsnd->OpenHandle = 0;
 
 	if (rdpsnd->data_in)
 	{
@@ -1411,11 +1407,9 @@ static UINT rdpsnd_virtual_channel_event_disconnected(rdpsndPlugin* rdpsnd)
 
 	MessagePipe_Free(rdpsnd->MsgPipe);
 	rdpsnd->MsgPipe = NULL;
-
 	rdpsnd_free_audio_formats(rdpsnd->ClientFormats, rdpsnd->NumberOfClientFormats);
 	rdpsnd->NumberOfClientFormats = 0;
 	rdpsnd->ClientFormats = NULL;
-
 	rdpsnd_free_audio_formats(rdpsnd->ServerFormats, rdpsnd->NumberOfServerFormats);
 	rdpsnd->NumberOfServerFormats = 0;
 	rdpsnd->ServerFormats = NULL;
@@ -1438,28 +1432,24 @@ static UINT rdpsnd_virtual_channel_event_disconnected(rdpsndPlugin* rdpsnd)
 		rdpsnd->device_name = NULL;
 	}
 
-	rdpsnd_remove_open_handle_data(rdpsnd->OpenHandle);
-
 	return CHANNEL_RC_OK;
 }
 
 static void rdpsnd_virtual_channel_event_terminated(rdpsndPlugin* rdpsnd)
 {
-	rdpsnd_remove_init_handle_data(rdpsnd->InitHandle);
-
+	rdpsnd->InitHandle = 0;
 	free(rdpsnd);
 }
 
-static VOID VCAPITYPE rdpsnd_virtual_channel_init_event(LPVOID pInitHandle, UINT event, LPVOID pData, UINT dataLength)
+static VOID VCAPITYPE rdpsnd_virtual_channel_init_event_ex(LPVOID lpUserParam, LPVOID pInitHandle,
+        UINT event, LPVOID pData, UINT dataLength)
 {
-	rdpsndPlugin* plugin;
 	UINT error = CHANNEL_RC_OK;
+	rdpsndPlugin* plugin = (rdpsndPlugin*) lpUserParam;
 
-	plugin = (rdpsndPlugin*) rdpsnd_get_init_handle_data(pInitHandle);
-
-	if (!plugin)
+	if (!plugin || (plugin->InitHandle != pInitHandle))
 	{
-		WLog_ERR(TAG,  "rdpsnd_virtual_channel_init_event: error no match");
+		WLog_ERR(TAG,  "error no match");
 		return;
 	}
 
@@ -1467,40 +1457,62 @@ static VOID VCAPITYPE rdpsnd_virtual_channel_init_event(LPVOID pInitHandle, UINT
 	{
 		case CHANNEL_EVENT_CONNECTED:
 			if ((error = rdpsnd_virtual_channel_event_connected(plugin, pData, dataLength)))
-				WLog_ERR(TAG, "rdpsnd_virtual_channel_event_connected failed with error %lu!", error);
+				WLog_ERR(TAG, "rdpsnd_virtual_channel_event_connected failed with error %"PRIu32"!",
+				         error);
+
 			break;
 
 		case CHANNEL_EVENT_DISCONNECTED:
 			if ((error = rdpsnd_virtual_channel_event_disconnected(plugin)))
-				WLog_ERR(TAG, "rdpsnd_virtual_channel_event_disconnected failed with error %lu!", error);
+				WLog_ERR(TAG,
+				         "rdpsnd_virtual_channel_event_disconnected failed with error %"PRIu32"!", error);
+
 			break;
 
 		case CHANNEL_EVENT_TERMINATED:
 			rdpsnd_virtual_channel_event_terminated(plugin);
 			break;
+
+		case CHANNEL_EVENT_ATTACHED:
+			plugin->attached = TRUE;
+			break;
+
+		case CHANNEL_EVENT_DETACHED:
+			plugin->attached = FALSE;
+			break;
+
+		default:
+			break;
 	}
-	if (error && plugin->rdpcontext)
-		setChannelError(plugin->rdpcontext, error, "rdpsnd_virtual_channel_init_event reported an error");
+
+	if (error && plugin && plugin->rdpcontext)
+		setChannelError(plugin->rdpcontext, error,
+		                "rdpsnd_virtual_channel_init_event reported an error");
 }
 
 /* rdpsnd is always built-in */
-#define VirtualChannelEntry	rdpsnd_VirtualChannelEntry
+#define VirtualChannelEntryEx	rdpsnd_VirtualChannelEntryEx
 
-BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
+BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID pInitHandle)
 {
 	UINT rc;
-
 	rdpsndPlugin* rdpsnd;
-	CHANNEL_ENTRY_POINTS_FREERDP* pEntryPointsEx;
+	CHANNEL_ENTRY_POINTS_FREERDP_EX* pEntryPointsEx;
 
+	if (!pEntryPoints)
+	{
+		return FALSE;
+	}
 
 	rdpsnd = (rdpsndPlugin*) calloc(1, sizeof(rdpsndPlugin));
+
 	if (!rdpsnd)
 	{
 		WLog_ERR(TAG, "calloc failed!");
 		return FALSE;
 	}
 
+	rdpsnd->attached = TRUE;
 #if !defined(_WIN32) && !defined(ANDROID)
 	{
 		sigset_t mask;
@@ -1509,34 +1521,33 @@ BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
 		pthread_sigmask(SIG_BLOCK, &mask, NULL);
 	}
 #endif
-
 	rdpsnd->channelDef.options =
-			CHANNEL_OPTION_INITIALIZED |
-			CHANNEL_OPTION_ENCRYPT_RDP;
-
+	    CHANNEL_OPTION_INITIALIZED |
+	    CHANNEL_OPTION_ENCRYPT_RDP;
 	strcpy(rdpsnd->channelDef.name, "rdpsnd");
+	pEntryPointsEx = (CHANNEL_ENTRY_POINTS_FREERDP_EX*) pEntryPoints;
 
-	pEntryPointsEx = (CHANNEL_ENTRY_POINTS_FREERDP*) pEntryPoints;
-
-	if ((pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP)) &&
-		(pEntryPointsEx->MagicNumber == FREERDP_CHANNEL_MAGIC_NUMBER))
+	if ((pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX)) &&
+	    (pEntryPointsEx->MagicNumber == FREERDP_CHANNEL_MAGIC_NUMBER))
 	{
 		rdpsnd->rdpcontext = pEntryPointsEx->context;
 	}
 
-	CopyMemory(&(rdpsnd->channelEntryPoints), pEntryPoints, sizeof(CHANNEL_ENTRY_POINTS_FREERDP));
-
 	rdpsnd->log = WLog_Get("com.freerdp.channels.rdpsnd.client");
+	CopyMemory(&(rdpsnd->channelEntryPoints), pEntryPoints,
+	           sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX));
+	rdpsnd->InitHandle = pInitHandle;
+	rc = rdpsnd->channelEntryPoints.pVirtualChannelInitEx(rdpsnd, NULL, pInitHandle,
+	        &rdpsnd->channelDef, 1, VIRTUAL_CHANNEL_VERSION_WIN2000,
+	        rdpsnd_virtual_channel_init_event_ex);
 
-	rc = rdpsnd->channelEntryPoints.pVirtualChannelInit(&rdpsnd->InitHandle,
-		&rdpsnd->channelDef, 1, VIRTUAL_CHANNEL_VERSION_WIN2000, rdpsnd_virtual_channel_init_event);
 	if (CHANNEL_RC_OK != rc)
 	{
-		WLog_ERR(TAG, "pVirtualChannelInit failed with %s [%08X]",
-				 WTSErrorToString(rc), rc);
+		WLog_ERR(TAG, "pVirtualChannelInitEx failed with %s [%08"PRIX32"]",
+		         WTSErrorToString(rc), rc);
 		free(rdpsnd);
 		return FALSE;
 	}
 
-	return rdpsnd_add_init_handle_data(rdpsnd->InitHandle, (void*) rdpsnd);
+	return TRUE;
 }

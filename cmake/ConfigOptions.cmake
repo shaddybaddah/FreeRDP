@@ -42,11 +42,18 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 if(NOT WIN32)
-    option(WITH_VALGRIND_MEMCHECK "Compile with valgrind helpers." OFF)
+	CMAKE_DEPENDENT_OPTION(WITH_VALGRIND_MEMCHECK "Compile with valgrind helpers." OFF
+		"NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_MEMORY; NOT WITH_SANITIZE_THREAD" OFF)
+	CMAKE_DEPENDENT_OPTION(WITH_SANITIZE_ADDRESS "Compile with gcc/clang address sanitizer." OFF
+		"NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_MEMORY; NOT WITH_SANITIZE_THREAD" OFF)
+	CMAKE_DEPENDENT_OPTION(WITH_SANITIZE_MEMORY "Compile with gcc/clang memory sanitizer." OFF
+        "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_THREAD" OFF)
+	CMAKE_DEPENDENT_OPTION(WITH_SANITIZE_THREAD "Compile with gcc/clang thread sanitizer." OFF
+		"NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_MEMORY" OFF)
 else()
 	if(NOT UWP)
-    	option(WITH_MEDIA_FOUNDATION "Enable H264 media foundation decoder." ON)
-    endif()
+		option(WITH_MEDIA_FOUNDATION "Enable H264 media foundation decoder." ON)
+	endif()
 endif()
 
 if(WIN32 AND NOT UWP)
@@ -100,17 +107,17 @@ option(WITH_DEBUG_CHANNELS "Print channel manager debug messages." ${DEFAULT_DEB
 option(WITH_DEBUG_CLIPRDR "Print clipboard redirection debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_DVC "Print dynamic virtual channel debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_TSMF "Print TSMF virtual channel debug messages." ${DEFAULT_DEBUG_OPTION})
-option(WITH_DEBUG_GDI "Print graphics debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_KBD "Print keyboard related debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_LICENSE "Print license debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_NEGO "Print negotiation related debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_NLA "Print authentication related debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_NTLM "Print NTLM debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_TSG "Print Terminal Server Gateway debug messages" ${DEFAULT_DEBUG_OPTION})
-option(WITH_DEBUG_ORDERS "Print drawing orders debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_RAIL "Print RemoteApp debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_RDP "Print RDP debug messages" ${DEFAULT_DEBUG_OPTION})
+option(WITH_DEBUG_RDPEI "Print input virtual channel debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_REDIR "Redirection debug messages" ${DEFAULT_DEBUG_OPTION})
+option(WITH_DEBUG_RDPDR "Rdpdr debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_RFX "Print RemoteFX debug messages." ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_SCARD "Print smartcard debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_SND "Print rdpsnd debug messages" ${DEFAULT_DEBUG_OPTION})
@@ -127,6 +134,10 @@ option(WITH_DEBUG_XV "Print XVideo debug messages" ${DEFAULT_DEBUG_OPTION})
 option(WITH_DEBUG_RINGBUFFER "Enable Ringbuffer debug messages" ${DEFAULT_DEBUG_OPTION})
 
 option(WITH_DEBUG_SYMBOLS "Pack debug symbols to installer" OFF)
+option(WITH_CCACHE "Use ccache support if available" ON)
+option(WITH_ICU "Use ICU for unicode conversion" OFF)
+
+option(USE_VERSION_FROM_GIT_TAG "Extract FreeRDP version from git tag." OFF)
 
 if(ANDROID)
 include(ConfigOptionsAndroid)
@@ -135,3 +146,4 @@ endif(ANDROID)
 if(IOS)
 include(ConfigOptionsiOS)
 endif(IOS)
+

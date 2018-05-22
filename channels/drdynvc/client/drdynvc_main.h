@@ -19,8 +19,8 @@
  * limitations under the License.
  */
 
-#ifndef __DRDYNVC_MAIN_H
-#define __DRDYNVC_MAIN_H
+#ifndef FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H
+#define FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H
 
 #include <winpr/wlog.h>
 #include <winpr/synch.h>
@@ -115,7 +115,7 @@ typedef enum _DRDYNVC_STATE DRDYNVC_STATE;
 struct drdynvc_plugin
 {
 	CHANNEL_DEF channelDef;
-	CHANNEL_ENTRY_POINTS_FREERDP channelEntryPoints;
+	CHANNEL_ENTRY_POINTS_FREERDP_EX channelEntryPoints;
 
 	wLog* log;
 	HANDLE thread;
@@ -134,8 +134,7 @@ struct drdynvc_plugin
 	int PriorityCharge3;
 	rdpContext* rdpcontext;
 
-
 	IWTSVirtualChannelManager* channel_mgr;
 };
 
-#endif
+#endif /* FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H */

@@ -22,111 +22,135 @@
 
 #include <winpr/sysinfo.h>
 #include "prim_test.h"
-
-static const int YCOCG_TRIAL_ITERATIONS = 20000;
-static const float TEST_TIME = 4.0;
-
-extern BOOL g_TestPrimitivesPerformance;
-
-extern pstatus_t general_YCoCgToRGB_8u_AC4R(const BYTE *pSrc, INT32 srcStep,
-	BYTE *pDst, INT32 dstStep, UINT32 width, UINT32 height,
-	UINT8 shift, BOOL withAlpha, BOOL invert);
-extern pstatus_t ssse3_YCoCgRToRGB_8u_AC4R(const BYTE *pSrc, INT32 srcStep,
-	BYTE *pDst, INT32 dstStep, UINT32 width, UINT32 height,
-	UINT8 shift, BOOL withAlpha, BOOL invert);
+#include <freerdp/utils/profiler.h>
 
 /* ------------------------------------------------------------------------- */
-int test_YCoCgRToRGB_8u_AC4R_func(void)
+static BOOL test_YCoCgRToRGB_8u_AC4R_func(UINT32 width, UINT32 height)
 {
-#ifdef WITH_SSE2
-	int i;
-	INT32 ALIGN(out_sse[4098]), ALIGN(out_sse_inv[4098]);
-#endif
-	INT32 ALIGN(in[4098]);
-	INT32 ALIGN(out_c[4098]), ALIGN(out_c_inv[4098]);
-	char testStr[256];
-	BOOL failed = FALSE;
-
-	testStr[0] = '\0';
-	get_random_data(in, sizeof(in));
-
-	general_YCoCgToRGB_8u_AC4R((const BYTE *) (in+1), 63*4,
-		(BYTE *) out_c, 63*4, 63, 61, 2, TRUE, FALSE);
-	general_YCoCgToRGB_8u_AC4R((const BYTE *) (in+1), 63*4,
-		(BYTE *) out_c_inv, 63*4, 63, 61, 2, TRUE, TRUE);
-#ifdef WITH_SSE2
-	if (IsProcessorFeaturePresentEx(PF_EX_SSSE3))
+	pstatus_t status = -1;
+	BYTE* out_sse = NULL;
+	BYTE* in = NULL;
+	BYTE* out_c = NULL;
+	UINT32 i, x;
+	const UINT32 srcStride = width * 4;
+	const UINT32 size = srcStride * height;
+	const UINT32 formats[] =
 	{
-		strcat(testStr, " SSSE3");
-		ssse3_YCoCgRToRGB_8u_AC4R((const BYTE *) (in+1), 63*4,
-			(BYTE *) out_sse, 63*4, 63, 61, 2, TRUE, FALSE);
+		PIXEL_FORMAT_ARGB32,
+		PIXEL_FORMAT_ABGR32,
+		PIXEL_FORMAT_RGBA32,
+		PIXEL_FORMAT_RGBX32,
+		PIXEL_FORMAT_BGRA32,
+		PIXEL_FORMAT_BGRX32
+	};
+	PROFILER_DEFINE(genericProf)
+	PROFILER_DEFINE(optProf)
+	in = _aligned_malloc(size, 16);
+	out_c = _aligned_malloc(size, 16);
+	out_sse = _aligned_malloc(size, 16);
 
-		for (i=0; i<63*61; ++i)
+	if (!in || !out_c || !out_sse)
+		goto fail;
+
+	winpr_RAND(in, size);
+
+	for (x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
+	{
+		const UINT32 format = formats[x];
+		const UINT32 dstStride = width * GetBytesPerPixel(format);
+		const char* formatName = FreeRDPGetColorFormatName(format);
+		PROFILER_CREATE(genericProf, "YCoCgRToRGB_8u_AC4R-GENERIC")
+		PROFILER_CREATE(optProf, "YCoCgRToRGB_8u_AC4R-OPT")
+		PROFILER_ENTER(genericProf)
+		status = generic->YCoCgToRGB_8u_AC4R(
+		             in, srcStride,
+		             out_c, format, dstStride, width, height, 2, TRUE);
+		PROFILER_EXIT(genericProf)
+
+		if (status != PRIMITIVES_SUCCESS)
+			goto loop_fail;
+
+		PROFILER_ENTER(optProf)
+		status = optimized->YCoCgToRGB_8u_AC4R(
+		             in, srcStride,
+		             out_sse, format, dstStride, width, height, 2, TRUE);
+		PROFILER_EXIT(optProf)
+
+		if (status != PRIMITIVES_SUCCESS)
+			goto loop_fail;
+
+		if (memcmp(out_c, out_sse, dstStride * height) != 0)
 		{
-			if (out_c[i] != out_sse[i]) {
-				printf("YCoCgRToRGB-SSE FAIL[%d]: 0x%08x -> C 0x%08x vs SSE 0x%08x\n", i,
-					in[i+1], out_c[i], out_sse[i]);
-				failed = TRUE;
+			for (i = 0; i < width * height; ++i)
+			{
+				const UINT32 c = ReadColor(out_c + 4 * i, format);
+				const UINT32 sse = ReadColor(out_sse + 4 * i, format);
+
+				if (c != sse)
+				{
+					printf("optimized->YCoCgRToRGB FAIL[%s] [%"PRIu32"]: 0x%08"PRIx32" -> C 0x%08"PRIx32" vs optimized 0x%08"PRIx32"\n",
+					       formatName, i, in[i + 1], c, sse);
+					status = -1;
+				}
 			}
 		}
-		ssse3_YCoCgRToRGB_8u_AC4R((const BYTE *) (in+1), 63*4,
-			(BYTE *) out_sse_inv, 63*4, 63, 61, 2, TRUE, TRUE);
-		for (i=0; i<63*61; ++i)
-		{
-			if (out_c_inv[i] != out_sse_inv[i]) {
-				printf("YCoCgRToRGB-SSE inverted FAIL[%d]: 0x%08x -> C 0x%08x vs SSE 0x%08x\n", i,
-					in[i+1], out_c_inv[i], out_sse_inv[i]);
-				failed = TRUE;
-			}
-		}
+
+		printf("--------------------------- [%s] [%"PRIu32"x%"PRIu32"] ---------------------------\n",
+		       formatName, width, height);
+		PROFILER_PRINT_HEADER
+		PROFILER_PRINT(genericProf)
+		PROFILER_PRINT(optProf)
+		PROFILER_PRINT_FOOTER
+	loop_fail:
+		PROFILER_FREE(genericProf)
+		PROFILER_FREE(optProf)
+
+		if (status != PRIMITIVES_SUCCESS)
+			goto fail;
 	}
-#endif /* i386 */
-	if (!failed) printf("All YCoCgRToRGB_8u_AC4R tests passed (%s).\n", testStr);
-	return (failed > 0) ? FAILURE : SUCCESS;
-}
 
-/* ------------------------------------------------------------------------- */
-STD_SPEED_TEST(
-	ycocg_to_rgb_speed, BYTE, BYTE, PRIM_NOP,
-	TRUE, general_YCoCgToRGB_8u_AC4R(src1, 64*4, dst, 64*4, 64, 64, 2, FALSE, FALSE),
-#ifdef WITH_SSE2
-	TRUE, ssse3_YCoCgRToRGB_8u_AC4R(src1, 64*4, dst, 64*4, 64, 64, 2, FALSE, FALSE),
-		PF_EX_SSSE3, TRUE,
-#else
-	FALSE, PRIM_NOP, 0, FALSE,
-#endif
-	FALSE, PRIM_NOP);
-
-int test_YCoCgRToRGB_8u_AC4R_speed(void)
-{
-	INT32 ALIGN(in[4096]);
-	INT32 ALIGN(out[4096]);
-	int size_array[] = { 64 };
-
-	get_random_data(in, sizeof(in));
-
-	ycocg_to_rgb_speed("YCoCgToRGB", "aligned", (const BYTE *) in,
-		0, 0, (BYTE *) out,
-		size_array, 1, YCOCG_TRIAL_ITERATIONS, TEST_TIME);
-	return SUCCESS;
+fail:
+	_aligned_free(in);
+	_aligned_free(out_c);
+	_aligned_free(out_sse);
+	return status == PRIMITIVES_SUCCESS;
 }
 
 int TestPrimitivesYCoCg(int argc, char* argv[])
 {
-	int status;
+	prim_test_setup(FALSE);
 
-	status = test_YCoCgRToRGB_8u_AC4R_func();
-
-	if (status != SUCCESS)
-		return 1;
-
-	if (g_TestPrimitivesPerformance)
+	/* Random resolution tests */
+	if (argc < 2)
 	{
-		status = test_YCoCgRToRGB_8u_AC4R_speed();
+		UINT32 x;
 
-		if (status != SUCCESS)
-			return 1;
+		for (x = 0; x < 10; x++)
+		{
+			UINT32 w, h;
+
+			do
+			{
+				winpr_RAND((BYTE*)&w, sizeof(w));
+				w %= 2048;
+			}
+			while (w < 16);
+
+			do
+			{
+				winpr_RAND((BYTE*)&h, sizeof(h));
+				h %= 2048;
+			}
+			while (h < 16);
+
+			if (!test_YCoCgRToRGB_8u_AC4R_func(w, h))
+				return 1;
+		}
 	}
+
+	/* Test once with full HD */
+	if (!test_YCoCgRToRGB_8u_AC4R_func(1920, 1080))
+		return 1;
 
 	return 0;
 }

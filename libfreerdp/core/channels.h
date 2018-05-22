@@ -17,13 +17,17 @@
  * limitations under the License.
  */
 
-#ifndef __CHANNEL_H
-#define __CHANNEL_H
+#ifndef FREERDP_LIB_CORE_CHANNELS_H
+#define FREERDP_LIB_CORE_CHANNELS_H
 
+#include <freerdp/api.h>
 #include "client.h"
 
-BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, BYTE* data, int size);
-BOOL freerdp_channel_process(freerdp* instance, wStream* s, UINT16 channelId);
-BOOL freerdp_channel_peer_process(freerdp_peer* client, wStream* s, UINT16 channelId);
+FREERDP_LOCAL BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId,
+                                        BYTE* data, int size);
+FREERDP_LOCAL BOOL freerdp_channel_process(freerdp* instance, wStream* s,
+        UINT16 channelId);
+FREERDP_LOCAL BOOL freerdp_channel_peer_process(freerdp_peer* client,
+        wStream* s, UINT16 channelId);
 
-#endif /* __CHANNEL_H */
+#endif /* FREERDP_LIB_CORE_CHANNELS_H */

@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __CERTIFICATE_H
-#define __CERTIFICATE_H
+#ifndef FREERDP_LIB_CORE_CERTIFICATE_H
+#define FREERDP_LIB_CORE_CERTIFICATE_H
 
 #include "rdp.h"
 
@@ -27,6 +27,7 @@
 
 #include <freerdp/settings.h>
 #include <freerdp/log.h>
+#include <freerdp/api.h>
 
 #include <winpr/print.h>
 #include <winpr/stream.h>
@@ -44,29 +45,24 @@
 #define BB_RSA_KEY_BLOB        		6
 #define BB_RSA_SIGNATURE_BLOB  		8
 
-BOOL certificate_read_x509_certificate(rdpCertBlob* cert, rdpCertInfo* info);
+FREERDP_LOCAL BOOL certificate_read_server_certificate(rdpCertificate*
+        certificate, BYTE* server_cert, size_t length);
 
-rdpX509CertChain* certificate_new_x509_certificate_chain(UINT32 count);
-void certificate_free_x509_certificate_chain(rdpX509CertChain* x509_cert_chain);
+FREERDP_LOCAL rdpCertificate* certificate_clone(rdpCertificate* certificate);
 
-BOOL certificate_read_server_proprietary_certificate(rdpCertificate* certificate, wStream* s);
-BOOL certificate_read_server_x509_certificate_chain(rdpCertificate* certificate, wStream* s);
-BOOL certificate_read_server_certificate(rdpCertificate* certificate, BYTE* server_cert, int length);
+FREERDP_LOCAL rdpCertificate* certificate_new(void);
+FREERDP_LOCAL void certificate_free(rdpCertificate* certificate);
 
-rdpCertificate* certificate_clone(rdpCertificate* certificate);
-
-rdpCertificate* certificate_new(void);
-void certificate_free(rdpCertificate* certificate);
-
-rdpRsaKey* key_new(const char *keyfile);
-rdpRsaKey* key_new_from_content(const char *keycontent, const char *keyfile);
-void key_free(rdpRsaKey* key);
+FREERDP_LOCAL rdpRsaKey* key_new(const char* keyfile);
+FREERDP_LOCAL rdpRsaKey* key_new_from_content(const char* keycontent,
+        const char* keyfile);
+FREERDP_LOCAL void key_free(rdpRsaKey* key);
 
 #define CERTIFICATE_TAG FREERDP_TAG("core.certificate")
 #ifdef WITH_DEBUG_CERTIFICATE
-#define DEBUG_CERTIFICATE(fmt, ...) WLog_DBG(CERTIFICATE_TAG, fmt, ## __VA_ARGS__)
+#define DEBUG_CERTIFICATE(...) WLog_DBG(CERTIFICATE_TAG, __VA_ARGS__)
 #else
-#define DEBUG_CERTIFICATE(fmt, ...) do { } while (0)
+#define DEBUG_CERTIFICATE(...) do { } while (0)
 #endif
 
-#endif /* __CERTIFICATE_H */
+#endif /* FREERDP_LIB_CORE_CERTIFICATE_H */

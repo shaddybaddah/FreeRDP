@@ -39,7 +39,6 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/)
 # Check for cmake compatibility (enable/disable features)
 include(CheckCmakeCompat)
 include(FindFeature)
-include(AutoVersioning)
 include(ConfigOptions)
 include(ComplexLibrary)
 include(FeatureSummary)
@@ -58,9 +57,11 @@ set(WINPR_API_VERSION "${WINPR_VERSION_MAJOR}")
 if(NOT IOS)
 	check_include_files(stdbool.h WINPR_HAVE_STDBOOL_H)
 	check_include_files(stdint.h WINPR_HAVE_STDINT_H)
+	check_include_files(inttypes.h WINPR_HAVE_INTTYPES_H)
 else(NOT IOS)
 	set(WINPR_HAVE_STDBOOL_H 1)
 	set(WINPR_HAVE_STDINT_H 1)
+	set(WINPR_HAVE_INTTYPES_H 1)
 endif(NOT IOS)
 
 if(FREERDP_BUILD)
@@ -159,6 +160,11 @@ endif()
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWINPR_EXPORTS")
 
+# Enable 64bit file support on linux.
+if("${CMAKE_SYSTEM_NAME}" MATCHES "Linux")
+	add_definitions("-D_FILE_OFFSET_BITS=64")
+endif()
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
 
@@ -174,14 +180,7 @@ if(BUILD_TESTING)
 	add_subdirectory(test)
 endif()
 
-if(WITH_MANPAGES)
-	if(OPENBSD)
-	    install(FILES wlog.1 DESTINATION man/man1)
-	else()
-	    install(FILES wlog.1 DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/man/man1)
-	endif()
-endif(WITH_MANPAGES)
-
+install_freerdp_man(wlog.7 7)
 # Exporting
 
 if(${CMAKE_VERSION} VERSION_GREATER "2.8.10")

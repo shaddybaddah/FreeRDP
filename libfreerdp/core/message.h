@@ -17,11 +17,12 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_CORE_MESSAGE_PRIVATE_H
-#define FREERDP_CORE_MESSAGE_PRIVATE_H
+#ifndef FREERDP_LIB_CORE_MESSAGE_H
+#define FREERDP_LIB_CORE_MESSAGE_H
 
 #include <freerdp/freerdp.h>
 #include <freerdp/message.h>
+#include <freerdp/api.h>
 
 /**
  * Update Message Queue
@@ -44,6 +45,7 @@ struct rdp_update_proxy
 	pPalette Palette;
 	pPlaySound PlaySound;
 	pSetKeyboardIndicators SetKeyboardIndicators;
+	pSetKeyboardImeStatus SetKeyboardImeStatus;
 	pRefreshRect RefreshRect;
 	pSuppressOutput SuppressOutput;
 	pSurfaceCommand SurfaceCommand;
@@ -125,13 +127,15 @@ struct rdp_update_proxy
 	HANDLE thread;
 };
 
-int update_message_queue_process_message(rdpUpdate* update, wMessage* message);
-int update_message_queue_free_message(wMessage* message);
+FREERDP_LOCAL int update_message_queue_process_message(rdpUpdate* update,
+        wMessage* message);
+FREERDP_LOCAL int update_message_queue_free_message(wMessage* message);
 
-int update_message_queue_process_pending_messages(rdpUpdate* update);
+FREERDP_LOCAL int update_message_queue_process_pending_messages(
+    rdpUpdate* update);
 
-rdpUpdateProxy* update_message_proxy_new(rdpUpdate* update);
-void update_message_proxy_free(rdpUpdateProxy* message);
+FREERDP_LOCAL rdpUpdateProxy* update_message_proxy_new(rdpUpdate* update);
+FREERDP_LOCAL void update_message_proxy_free(rdpUpdateProxy* message);
 
 /**
  * Input Message Queue
@@ -154,11 +158,12 @@ struct rdp_input_proxy
 	pKeyboardPauseEvent KeyboardPauseEvent;
 };
 
-int input_message_queue_process_message(rdpInput* input, wMessage* message);
-int input_message_queue_free_message(wMessage* message);
-int input_message_queue_process_pending_messages(rdpInput* input);
+FREERDP_LOCAL int input_message_queue_process_message(rdpInput* input,
+        wMessage* message);
+FREERDP_LOCAL int input_message_queue_free_message(wMessage* message);
+FREERDP_LOCAL int input_message_queue_process_pending_messages(rdpInput* input);
 
-rdpInputProxy* input_message_proxy_new(rdpInput* input);
-void input_message_proxy_free(rdpInputProxy* proxy);
+FREERDP_LOCAL rdpInputProxy* input_message_proxy_new(rdpInput* input);
+FREERDP_LOCAL void input_message_proxy_free(rdpInputProxy* proxy);
 
-#endif /* FREERDP_CORE_MESSAGE_PRIVATE_H */
+#endif /* FREERDP_LIB_CORE_MESSAGE_H */

@@ -4,7 +4,7 @@
 #include <winpr/thread.h>
 
 
-BOOL test_mutex_basic()
+static BOOL test_mutex_basic(void)
 {
 	HANDLE mutex;
 	DWORD rc;
@@ -18,7 +18,7 @@ BOOL test_mutex_basic()
 	rc = WaitForSingleObject(mutex, INFINITE);
 	if (rc != WAIT_OBJECT_0)
 	{
-		printf("%s: WaitForSingleObject on mutex failed with %u\n", __FUNCTION__, rc);
+		printf("%s: WaitForSingleObject on mutex failed with %"PRIu32"\n", __FUNCTION__, rc);
 		return FALSE;
 	}
 
@@ -42,7 +42,7 @@ BOOL test_mutex_basic()
 	return TRUE;
 }
 
-BOOL test_mutex_recursive()
+static BOOL test_mutex_recursive(void)
 {
 	HANDLE mutex;
 	DWORD rc, i, cnt = 50;
@@ -58,7 +58,7 @@ BOOL test_mutex_recursive()
 		rc = WaitForSingleObject(mutex, INFINITE);
 		if (rc != WAIT_OBJECT_0)
 		{
-			printf("%s: WaitForSingleObject #%u on mutex failed with %u\n", __FUNCTION__, i, rc);
+			printf("%s: WaitForSingleObject #%"PRIu32" on mutex failed with %"PRIu32"\n", __FUNCTION__, i, rc);
 			return FALSE;
 		}
 	}
@@ -67,7 +67,7 @@ BOOL test_mutex_recursive()
 	{
 		if (!ReleaseMutex(mutex))
 		{
-			printf("%s: ReleaseMutex #%u failed\n", __FUNCTION__, i);
+			printf("%s: ReleaseMutex #%"PRIu32" failed\n", __FUNCTION__, i);
 			return FALSE;
 		}
 	}
@@ -94,11 +94,11 @@ BOOL test_mutex_recursive()
 }
 
 
-HANDLE thread1_mutex1 = NULL;
-HANDLE thread1_mutex2 = NULL;
-BOOL   thread1_failed = TRUE;
+static HANDLE thread1_mutex1 = NULL;
+static HANDLE thread1_mutex2 = NULL;
+static BOOL   thread1_failed = TRUE;
 
-DWORD WINAPI test_mutex_thread1(LPVOID lpParam)
+static DWORD WINAPI test_mutex_thread1(LPVOID lpParam)
 {
 	HANDLE hStartEvent = (HANDLE)lpParam;
 	DWORD rc = 0;
@@ -120,7 +120,7 @@ DWORD WINAPI test_mutex_thread1(LPVOID lpParam)
 	rc = WaitForSingleObject(thread1_mutex1, 10);
 	if (rc != WAIT_TIMEOUT)
 	{
-		fprintf(stderr, "%s: WaitForSingleObject on thread1_mutex1 unexpectedly returned %u instead of WAIT_TIMEOUT (%u)\n",
+		fprintf(stderr, "%s: WaitForSingleObject on thread1_mutex1 unexpectedly returned %"PRIu32" instead of WAIT_TIMEOUT (%u)\n",
 			 __FUNCTION__, rc, WAIT_TIMEOUT);
 		return 0;
 	}
@@ -128,7 +128,7 @@ DWORD WINAPI test_mutex_thread1(LPVOID lpParam)
 	rc = WaitForSingleObject(thread1_mutex2, 10);
 	if (rc != WAIT_OBJECT_0)
 	{
-		fprintf(stderr, "%s: WaitForSingleObject on thread1_mutex2 unexpectedly returned %u instead of WAIT_OBJECT_0\n",
+		fprintf(stderr, "%s: WaitForSingleObject on thread1_mutex2 unexpectedly returned %"PRIu32" instead of WAIT_OBJECT_0\n",
 			 __FUNCTION__, rc);
 		return 0;
 	}
@@ -143,7 +143,7 @@ DWORD WINAPI test_mutex_thread1(LPVOID lpParam)
 	return 0;
 }
 
-BOOL test_mutex_threading()
+static BOOL test_mutex_threading(void)
 {
 	HANDLE hThread = NULL;
 	HANDLE hStartEvent = NULL;

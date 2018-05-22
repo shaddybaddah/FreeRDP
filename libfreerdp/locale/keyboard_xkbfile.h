@@ -17,15 +17,19 @@
  * limitations under the License.
  */
 
-#ifndef __LOCALE_KEYBOARD_XKB_H
-#define __LOCALE_KEYBOARD_XKB_H
+#ifndef FREERDP_LIB_LOCALE_KEYBOARD_XKB_H
+#define FREERDP_LIB_LOCALE_KEYBOARD_XKB_H
 
 #include <freerdp/types.h>
 #include <freerdp/locale/keyboard.h>
+#include <freerdp/api.h>
 
-int freerdp_keyboard_init_xkbfile(DWORD* keyboardLayoutId, DWORD x11_keycode_to_rdp_scancode[256]);
+FREERDP_LOCAL int freerdp_keyboard_init_xkbfile(DWORD* keyboardLayoutId,
+        DWORD x11_keycode_to_rdp_scancode[256]);
 
-int detect_keyboard_layout_from_xkbfile(void* display, DWORD* keyboardLayoutId);
-int freerdp_keyboard_load_map_from_xkbfile(void* display, DWORD x11_keycode_to_rdp_scancode[256]);
+FREERDP_LOCAL int detect_keyboard_layout_from_xkbfile(void* display,
+        DWORD* keyboardLayoutId);
+FREERDP_LOCAL int freerdp_keyboard_load_map_from_xkbfile(void* display,
+        DWORD x11_keycode_to_rdp_scancode[256]);
 
-#endif /* __LOCALE_KEYBOARD_XKB_H */
+#endif /* FREERDP_LIB_LOCALE_KEYBOARD_XKB_H */

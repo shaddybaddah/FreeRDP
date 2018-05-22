@@ -18,18 +18,21 @@
  * limitations under the License.
  */
 
-#ifndef __WLF_INPUT_H
-#define __WLF_INPUT_H
+#ifndef FREERDP_CLIENT_WAYLAND_INPUT_H
+#define FREERDP_CLIENT_WAYLAND_INPUT_H
 
 #include <freerdp/freerdp.h>
+#include <freerdp/gdi/gdi.h>
+#include <freerdp/gdi/gfx.h>
 #include <uwac/uwac.h>
 
-BOOL wlf_handle_pointer_enter(freerdp* instance, UwacPointerEnterLeaveEvent *ev);
-BOOL wlf_handle_pointer_motion(freerdp* instance, UwacPointerMotionEvent *ev);
-BOOL wlf_handle_pointer_buttons(freerdp* instance, UwacPointerButtonEvent *ev);
-BOOL wlf_handle_pointer_axis(freerdp* instance, UwacPointerAxisEvent *ev);
+BOOL wlf_handle_pointer_enter(freerdp* instance,
+                              UwacPointerEnterLeaveEvent* ev);
+BOOL wlf_handle_pointer_motion(freerdp* instance, UwacPointerMotionEvent* ev);
+BOOL wlf_handle_pointer_buttons(freerdp* instance, UwacPointerButtonEvent* ev);
+BOOL wlf_handle_pointer_axis(freerdp* instance, UwacPointerAxisEvent* ev);
 
-BOOL wlf_handle_key(freerdp* instance, UwacKeyEvent *ev);
-BOOL wlf_keyboard_enter(freerdp *instance, UwacKeyboardEnterLeaveEvent *ev);
+BOOL wlf_handle_key(freerdp* instance, UwacKeyEvent* ev);
+BOOL wlf_keyboard_enter(freerdp* instance, UwacKeyboardEnterLeaveEvent* ev);
 
-#endif /* __WLF_INPUT_H */
+#endif /* FREERDP_CLIENT_WAYLAND_INPUT_H */

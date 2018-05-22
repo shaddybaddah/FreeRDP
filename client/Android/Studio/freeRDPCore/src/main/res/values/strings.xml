@@ -27,7 +27,6 @@
     <!-- List section headers -->
     <string name="section_bookmarks">Manual Connections</string>
     <string name="section_active_sessions">Active Sessions</string>
-    <string name="action_settings">foobar</string>
     <!-- Search strings -->
     <string name="search_hint">Connect to Computer</string>
     <!-- List placeholder labels -->
@@ -54,14 +53,17 @@
     <string name="settings_cat_screen">Screen Settings</string>
     <string name="settings_colors">Colors</string>
     <string-array name="colors_array">
+        <item>Palette (8 Bit)</item>
+        <item>High Color (15 Bit)</item>
         <item>High Color (16 Bit)</item>
         <item>True Color (24 Bit)</item>
         <item>Highest Quality (32 Bit)</item>
     </string-array>
     <!-- This array is used as is in code,
 	do not translate! -->
-    <string-array name="colors_values_array"
-                  translatable="false">
+    <string-array name="colors_values_array" translatable="false">
+        <item>8</item>
+        <item>15</item>
         <item>16</item>
         <item>24</item>
         <item>32</item>
@@ -85,8 +87,7 @@
     </string-array>
     <!-- This array is used as is in code,
 	do not translate! -->
-    <string-array name="resolutions_values_array"
-                  translatable="false">
+    <string-array name="resolutions_values_array" translatable="false">
         <item>automatic</item>
         <item>fitscreen</item>
         <item>custom</item>
@@ -104,8 +105,8 @@
     <string name="settings_performance">Performance</string>
     <string name="settings_cat_performance">Performance Settings</string>
     <string name="settings_perf_remotefx">RemoteFX</string>
-    <string name="settings_perf_gfx">GFX</string>
-    <string name="settings_perf_gfx_h264">H264</string>
+    <string name="settings_perf_gfx" translatable="false">GFX</string>
+    <string name="settings_perf_gfx_h264" translatable="false">H264</string>
     <string name="settings_perf_wallpaper">Desktop Background</string>
     <string name="settings_perf_font_smoothing">Font Smoothing</string>
     <string name="settings_perf_desktop_composition">Desktop Composition</string>
@@ -129,8 +130,7 @@
     </string-array>
     <!-- This array is used as is in code,
 	do not translate! -->
-    <string-array name="redirect_sound_values_array"
-                  translatable="false">
+    <string-array name="redirect_sound_values_array" translatable="false">
         <item>2</item>
         <item>1</item>
         <item>0</item>
@@ -145,8 +145,7 @@
     </string-array>
     <!-- This array is used as is in code,
 	do not translate! -->
-    <string-array name="security_values_array"
-                  translatable="false">
+    <string-array name="security_values_array" translatable="false">
         <item>0</item>
         <item>1</item>
         <item>2</item>
@@ -164,12 +163,14 @@
     <string name="settings_password_empty">not set</string>
     <string name="settings_cat_ui">User Interface</string>
     <string name="settings_ui_hide_status_bar">Hide Status Bar</string>
+    <string name="settings_ui_hide_action_bar">Hide Action Bar</string>
     <string name="settings_ui_hide_zoom_controls">Hide Zoom Controls</string>
     <string name="settings_ui_swap_mouse_buttons">Swap Mouse Buttons</string>
     <string name="settings_ui_invert_scrolling">Invert Scrolling</string>
     <string name="settings_ui_auto_scroll_touchpointer">Touch Pointer Auto Scroll</string>
     <string name="settings_ui_ask_on_exit">Show Dialog on Exit</string>
     <string name="settings_cat_power">Power Saving</string>
+    <string name="settings_cat_client">Client</string>
     <string name="settings_power_disconnect_timeout">Close idle Connections</string>
     <string name="settings_cat_security">Security</string>
     <string name="settings_security_accept_certificates">Accept all Certificates</string>
@@ -211,4 +212,41 @@
     <string name="dlg_msg_clear_cert_cache">Are you sure you want to delete all your cached Certificates?</string>
     <string name="debug_level">Debug Level</string>
     <string name="settings_debug">Debug Settings</string>
+    <string name="preference_title_client">Client</string>
+    <string name="preference_key_client_name" translatable="false">preference_key_client_name</string>
+    <string name="preference_title_client_name">Client Name</string>
+    <string name="preference_default_client_name" translatable="false">aFreeRDP</string>
+    <string name="preference_key_accept_certificates" translatable="false">security.accept_certificates</string>
+    <string name="preference_key_security_clear_certificate_cache" translatable="false">security.clear_certificate_cache</string>
+    <string name="preference_key_power_disconnect_timeout" translatable="false">power.disconnect_timeout</string>
+    <string name="preference_key_ui_hide_status_bar" translatable="false">ui.hide_status_bar</string>
+    <string name="preference_key_ui_ask_on_exit" translatable="false">ui.ask_on_exit</string>
+    <string name="preference_key_ui_auto_scroll_touchpointer" translatable="false">ui.auto_scroll_touchpointer</string>
+    <string name="preference_key_ui_invert_scrolling" translatable="false">ui.invert_scrolling</string>
+    <string name="preference_key_ui_swap_mouse_buttons" translatable="false">ui.swap_mouse_buttons</string>
+    <string name="preference_key_ui_hide_zoom_controls" translatable="false">ui.hide_zoom_controls</string>
+    <string name="preference_key_ui_hide_action_bar" translatable="false">ui.hide_action_bar</string>
+    <string-array name="debug_array" translatable="false">
+        <item>OFF</item>
+        <item>FATAL</item>
+        <item>ERROR</item>
+        <item>WARN</item>
+        <item>INFO</item>
+        <item>DEBUG</item>
+        <item>TRACE</item>
+    </string-array>
+    <!-- This array is used as is in code,
+	do not translate! -->
+    <string-array name="debug_values_array" translatable="false">
+        <item>OFF</item>
+        <item>FATAL</item>
+        <item>ERROR</item>
+        <item>WARN</item>
+        <item>INFO</item>
+        <item>DEBUG</item>
+        <item>TRACE</item>
+    </string-array>
+
+    <string name="preference_key_h264_3g" translatable="false">bookmark.perf_gfx_h264</string>
+    <string name="preference_key_h264" translatable="false">bookmark.perf_gfx_h264</string>
 </resources>

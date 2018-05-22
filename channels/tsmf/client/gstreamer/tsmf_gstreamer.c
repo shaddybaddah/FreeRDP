@@ -33,7 +33,15 @@
 
 #include <winpr/string.h>
 
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wparentheses-equality"
+#endif /* __clang__ */
 #include <gst/gst.h>
+#if __clang__
+#pragma clang diagnostic pop
+#endif /* __clang__ */
+
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
 
@@ -104,14 +112,14 @@ static void tsmf_gstreamer_need_data(GstAppSrc *src, guint length, gpointer user
 {
 	TSMFGstreamerDecoder* mdecoder = user_data;
 	(void) mdecoder;
-	DEBUG_TSMF("%s length=%lu", get_type(mdecoder), length);
+	DEBUG_TSMF("%s length=%u", get_type(mdecoder), length);
 }
 
 static gboolean tsmf_gstreamer_seek_data(GstAppSrc *src, guint64 offset, gpointer user_data)
 {
 	TSMFGstreamerDecoder* mdecoder = user_data;
 	(void) mdecoder;
-	DEBUG_TSMF("%s offset=%llu", get_type(mdecoder), offset);
+	DEBUG_TSMF("%s offset=%"PRIu64"", get_type(mdecoder), offset);
 
 	return TRUE;
 }
@@ -127,7 +135,7 @@ static BOOL tsmf_gstreamer_change_volume(ITSMFDecoder* decoder, UINT32 newVolume
 		return TRUE;
 
 	mdecoder->gstMuted = (BOOL) muted;
-	DEBUG_TSMF("mute=[%d]", mdecoder->gstMuted);
+	DEBUG_TSMF("mute=[%"PRId32"]", mdecoder->gstMuted);
 	mdecoder->gstVolume = (double) newVolume / (double) 10000;
 	DEBUG_TSMF("gst_new_vol=[%f]", mdecoder->gstVolume);
 
@@ -499,7 +507,7 @@ static BOOL tsmf_gstreamer_set_format(ITSMFDecoder* decoder, TS_AM_MEDIA_TYPE* m
 	if (media_type->ExtraDataSize > 0)
 	{
 		GstBuffer *buffer;
-		DEBUG_TSMF("Extra data available (%d)", media_type->ExtraDataSize);
+		DEBUG_TSMF("Extra data available (%"PRIu32")", media_type->ExtraDataSize);
 		buffer = tsmf_get_buffer_from_data(media_type->ExtraData, media_type->ExtraDataSize);
 
 		if (!buffer)
@@ -511,7 +519,7 @@ static BOOL tsmf_gstreamer_set_format(ITSMFDecoder* decoder, TS_AM_MEDIA_TYPE* m
 		gst_caps_set_simple(mdecoder->gst_caps, "codec_data", GST_TYPE_BUFFER, buffer, NULL);
 	}
 
-	DEBUG_TSMF("%p format '%s'", mdecoder, gst_caps_to_string(mdecoder->gst_caps));
+	DEBUG_TSMF("%p format '%s'", (void*) mdecoder, gst_caps_to_string(mdecoder->gst_caps));
 	tsmf_platform_set_format(mdecoder);
 
 	/* Create the pipeline... */
@@ -693,8 +701,8 @@ static BOOL tsmf_gstreamer_decodeEx(ITSMFDecoder* decoder, const BYTE *data, UIN
 	 * We don't expect to block here often, since the pipeline should
 	 * have more than enough buffering.
 	 */
-	DEBUG_TSMF("%s. Start:(%lu) End:(%lu) Duration:(%d) Last Start:(%lu)",
-			   get_type(mdecoder), start_time, end_time, (int)duration,
+	DEBUG_TSMF("%s. Start:(%"PRIu64") End:(%"PRIu64") Duration:(%"PRIu64") Last Start:(%"PRIu64")",
+			   get_type(mdecoder), start_time, end_time, duration,
 			   mdecoder->last_sample_start_time);
 
 	if (mdecoder->shutdown)
@@ -722,7 +730,7 @@ static BOOL tsmf_gstreamer_decodeEx(ITSMFDecoder* decoder, const BYTE *data, UIN
 
 	if (gst_buf == NULL)
 	{
-		WLog_ERR(TAG, "tsmf_get_buffer_from_data(%p, %d) failed.", data, data_size);
+		WLog_ERR(TAG, "tsmf_get_buffer_from_data(%p, %"PRIu32") failed.", (void*) data, data_size);
 		return FALSE;
 	}
 
@@ -752,7 +760,7 @@ static BOOL tsmf_gstreamer_decodeEx(ITSMFDecoder* decoder, const BYTE *data, UIN
 
 	if (mdecoder->pipeline_start_time_valid)
 	{
-		DEBUG_TSMF("%s start time %lu", get_type(mdecoder), start_time);
+		DEBUG_TSMF("%s start time %"PRIu64"", get_type(mdecoder), start_time);
 
 		/* Adjusted the condition for a seek to be based on start time only
 		 * WMV1 and WMV2 files in particular have bad end time and duration values
@@ -768,10 +776,10 @@ static BOOL tsmf_gstreamer_decodeEx(ITSMFDecoder* decoder, const BYTE *data, UIN
 		/* If the start_time is valid and different from the previous start time by more than the seek tolerance, then we have a seek condition */
 		if (((start_time > maxTime) || (start_time < minTime)) && useTimestamps)
 		{
-			DEBUG_TSMF("tsmf_gstreamer_decodeEx: start_time=[%lu] > last_sample_start_time=[%lu] OR ", start_time, mdecoder->last_sample_start_time);
-			DEBUG_TSMF("tsmf_gstreamer_decodeEx: start_time=[%lu] < last_sample_start_time=[%lu] with", start_time, mdecoder->last_sample_start_time);
+			DEBUG_TSMF("tsmf_gstreamer_decodeEx: start_time=[%"PRIu64"] > last_sample_start_time=[%"PRIu64"] OR ", start_time, mdecoder->last_sample_start_time);
+			DEBUG_TSMF("tsmf_gstreamer_decodeEx: start_time=[%"PRIu64"] < last_sample_start_time=[%"PRIu64"] with", start_time, mdecoder->last_sample_start_time);
 			DEBUG_TSMF("tsmf_gstreamer_decodeEX: a tolerance of more than [%lu] from the last sample", SEEK_TOLERANCE);
-			DEBUG_TSMF("tsmf_gstreamer_decodeEX: minTime=[%lu] maxTime=[%lu]", minTime, maxTime);
+			DEBUG_TSMF("tsmf_gstreamer_decodeEX: minTime=[%"PRIu64"] maxTime=[%"PRIu64"]", minTime, maxTime);
 
 			mdecoder->seeking = TRUE;
 
@@ -783,7 +791,7 @@ static BOOL tsmf_gstreamer_decodeEx(ITSMFDecoder* decoder, const BYTE *data, UIN
 	}
 	else
 	{
-		DEBUG_TSMF("%s start time %lu", get_type(mdecoder), start_time);
+		DEBUG_TSMF("%s start time %"PRIu64"", get_type(mdecoder), start_time);
 		/* Always set base/start time to 0. Will use seek offset to translate real buffer times
 		 * back to 0. This allows the video to be started from anywhere and the ability to handle seeks
 		 * without rebuilding the pipeline, etc. since that is costly
@@ -834,7 +842,7 @@ static BOOL tsmf_gstreamer_decodeEx(ITSMFDecoder* decoder, const BYTE *data, UIN
 	{
 		DEBUG_TSMF("%s: state=%s", get_type(mdecoder), gst_element_state_get_name(GST_STATE(mdecoder->pipe)));	
 
-		DEBUG_TSMF("%s Paused: %i   Shutdown: %i   Ready: %i", get_type(mdecoder), mdecoder->paused, mdecoder->shutdown, mdecoder->ready);
+		DEBUG_TSMF("%s Paused: %"PRIi32"   Shutdown: %i   Ready: %"PRIi32"", get_type(mdecoder), mdecoder->paused, mdecoder->shutdown, mdecoder->ready);
 		if (!mdecoder->paused && !mdecoder->shutdown && mdecoder->ready)
 			tsmf_gstreamer_pipeline_set_state(mdecoder, GST_STATE_PLAYING);
 	}
@@ -1020,10 +1028,14 @@ ITSMFDecoder* freerdp_tsmf_client_subsystem_entry(void)
 {
 	TSMFGstreamerDecoder *decoder;
 
+#if GST_CHECK_VERSION(0,10,31)
 	if (!gst_is_initialized())
 	{
 		gst_init(NULL, NULL);
 	}
+#else
+	gst_init(NULL, NULL);
+#endif
 
 	decoder = calloc(1, sizeof(TSMFGstreamerDecoder));
 

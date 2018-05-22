@@ -17,17 +17,18 @@
  * limitations under the License.
  */
 
-#ifndef __NSC_SSE2_H
-#define __NSC_SSE2_H
+#ifndef FREERDP_LIB_CODEC_NSC_SSE2_H
+#define FREERDP_LIB_CODEC_NSC_SSE2_H
 
 #include <freerdp/codec/nsc.h>
+#include <freerdp/api.h>
 
-void nsc_init_sse2(NSC_CONTEXT* context);
+FREERDP_LOCAL void nsc_init_sse2(NSC_CONTEXT* context);
 
 #ifdef WITH_SSE2
- #ifndef NSC_INIT_SIMD
-  #define NSC_INIT_SIMD(_context) nsc_init_sse2(_context)
- #endif
+#ifndef NSC_INIT_SIMD
+#define NSC_INIT_SIMD(_context) nsc_init_sse2(_context)
+#endif
 #endif
 
-#endif /* __NSC_SSE2_H */
+#endif /* FREERDP_LIB_CODEC_NSC_SSE2_H */

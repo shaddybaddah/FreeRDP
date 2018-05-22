@@ -695,7 +695,12 @@ const CHAR* WTSSessionStateToString(WTS_CONNECTSTATE_CLASS state)
 
 BOOL WTSRegisterWtsApiFunctionTable(PWtsApiFunctionTable table)
 {
-	g_WtsApi = table;
+	/* Use InitOnceExecuteOnce here as well - otherwise a table set with this
+	   function is overriden on the first use of a WTS* API call (due to
+	   wtsapiInitOnce not being set). */
+	InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, (PVOID)table, NULL);
+	if (!g_WtsApi)
+		return FALSE;
 	return TRUE;
 }
 
@@ -722,11 +727,12 @@ static void InitializeWtsApiStubs_Env()
 {
 	DWORD nSize;
 	char *env = NULL;
+	LPCSTR wts = "WTSAPI_LIBRARY";
 
 	if (g_WtsApi)
 		return;
 
-	nSize = GetEnvironmentVariableA("WTSAPI_LIBRARY", NULL, 0);
+	nSize = GetEnvironmentVariableA(wts, NULL, 0);
 
 	if (!nSize)
 		return;
@@ -734,7 +740,7 @@ static void InitializeWtsApiStubs_Env()
 	env = (LPSTR) malloc(nSize);
 	if (env)
 	{
-		if (GetEnvironmentVariableA("WTSAPI_LIBRARY", env, nSize))
+		if (GetEnvironmentVariableA(wts, env, nSize) == nSize - 1)
 			LoadAndInitialize(env);
 		free(env);
 	}
@@ -787,6 +793,12 @@ static void InitializeWtsApiStubs_FreeRDS()
 
 static BOOL CALLBACK InitializeWtsApiStubs(PINIT_ONCE once, PVOID param, PVOID *context)
 {
+	if (param)
+	{
+		g_WtsApi = (PWtsApiFunctionTable)param;
+		return TRUE;
+	}
+
 	InitializeWtsApiStubs_Env();
 
 #ifdef _WIN32

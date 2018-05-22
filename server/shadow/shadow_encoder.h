@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_SHADOW_SERVER_ENCODER_H
-#define FREERDP_SHADOW_SERVER_ENCODER_H
+#ifndef FREERDP_SERVER_SHADOW_ENCODER_H
+#define FREERDP_SERVER_SHADOW_ENCODER_H
 
 #include <winpr/crt.h>
 #include <winpr/stream.h>
@@ -49,12 +49,14 @@ struct rdp_shadow_encoder
 	NSC_CONTEXT* nsc;
 	BITMAP_PLANAR_CONTEXT* planar;
 	BITMAP_INTERLEAVED_CONTEXT* interleaved;
+	H264_CONTEXT* h264;
 
 	int fps;
 	int maxFps;
 	BOOL frameAck;
 	UINT32 frameId;
 	UINT32 lastAckframeId;
+	UINT32 queueDepth;
 };
 
 #ifdef __cplusplus
@@ -72,4 +74,4 @@ void shadow_encoder_free(rdpShadowEncoder* encoder);
 }
 #endif
 
-#endif /* FREERDP_SHADOW_SERVER_ENCODER_H */
+#endif /* FREERDP_SERVER_SHADOW_ENCODER_H */

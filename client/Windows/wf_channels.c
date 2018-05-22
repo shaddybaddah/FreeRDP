@@ -27,19 +27,25 @@
 
 #include <freerdp/gdi/gfx.h>
 
-void wf_OnChannelConnectedEventHandler(rdpContext* context, ChannelConnectedEventArgs* e)
+#include <freerdp/log.h>
+#define TAG CLIENT_TAG("windows")
+
+void wf_OnChannelConnectedEventHandler(void* context,
+                                       ChannelConnectedEventArgs* e)
 {
 	wfContext* wfc = (wfContext*) context;
-	rdpSettings* settings = context->settings;
+	rdpSettings* settings = wfc->context.settings;
 
 	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
 	{
-		
 	}
 	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
 	{
-		if (settings->SoftwareGdi)
-			gdi_graphics_pipeline_init(context->gdi, (RdpgfxClientContext*) e->pInterface);
+		if (!settings->SoftwareGdi)
+			WLog_WARN(TAG,
+			          "Channel "RDPGFX_DVC_CHANNEL_NAME" does not support hardware acceleration, using fallback.");
+
+		gdi_graphics_pipeline_init(wfc->context.gdi, (RdpgfxClientContext*) e->pInterface);
 	}
 	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
@@ -51,23 +57,22 @@ void wf_OnChannelConnectedEventHandler(rdpContext* context, ChannelConnectedEven
 	}
 	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
 	{
-		
 	}
 }
 
-void wf_OnChannelDisconnectedEventHandler(rdpContext* context, ChannelDisconnectedEventArgs* e)
+void wf_OnChannelDisconnectedEventHandler(void* context,
+        ChannelDisconnectedEventArgs* e)
 {
 	wfContext* wfc = (wfContext*) context;
-	rdpSettings* settings = context->settings;
+	rdpSettings* settings = wfc->context.settings;
 
 	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
 	{
-
 	}
 	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
 	{
-		if (settings->SoftwareGdi)
-			gdi_graphics_pipeline_uninit(context->gdi, (RdpgfxClientContext*) e->pInterface);
+		gdi_graphics_pipeline_uninit(wfc->context.gdi,
+		                             (RdpgfxClientContext*) e->pInterface);
 	}
 	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
@@ -79,6 +84,5 @@ void wf_OnChannelDisconnectedEventHandler(rdpContext* context, ChannelDisconnect
 	}
 	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
 	{
-		
 	}
 }

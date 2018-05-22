@@ -30,6 +30,11 @@
 #include <winpr/string.h>
 #include <winpr/winpr.h>
 #include <winpr/version.h>
+#include <winpr/wlog.h>
+
+#if !defined(WIN32)
+#include <pthread.h>
+#endif
 
 void winpr_get_version(int* major, int* minor, int* revision)
 {
@@ -69,3 +74,4 @@ const char* winpr_get_build_config(void)
 
 	return build_config;
 }
+

@@ -3,6 +3,8 @@
  * X11 Client
  *
  * Copyright 2011 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2016 Thincast Technologies GmbH
+ * Copyright 2016 Armin Novak <armin.novak@thincast.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +19,8 @@
  * limitations under the License.
  */
 
-#ifndef __XFREERDP_H
-#define __XFREERDP_H
+#ifndef FREERDP_CLIENT_X11_FREERDP_H
+#define FREERDP_CLIENT_X11_FREERDP_H
 
 typedef struct xf_context xfContext;
 
@@ -67,6 +69,7 @@ struct xf_bitmap
 {
 	rdpBitmap bitmap;
 	Pixmap pixmap;
+	XImage* image;
 };
 typedef struct xf_bitmap xfBitmap;
 
@@ -78,6 +81,8 @@ struct xf_glyph
 typedef struct xf_glyph xfGlyph;
 
 typedef struct xf_clipboard xfClipboard;
+typedef struct _xfDispContext xfDispContext;
+typedef struct _xfVideoContext xfVideoContext;
 
 /* Value of the first logical button number in X11 which must be */
 /* subtracted to go from a button number in X11 to an index into */
@@ -92,20 +97,12 @@ struct xf_context
 	rdpContext context;
 	DEFINE_RDP_CLIENT_COMMON();
 
-	freerdp* instance;
-	rdpSettings* settings;
-	rdpCodecs* codecs;
-
 	GC gc;
-	int bpp;
 	int xfds;
 	int depth;
-	int sessionWidth;
-	int sessionHeight;
-	int srcBpp;
+
 	GC gc_mono;
 	BOOL invert;
-	UINT32 format;
 	Screen* screen;
 	XImage* image;
 	Pixmap primary;
@@ -131,32 +128,19 @@ struct xf_context
 	xfFullscreenMonitors fullscreenMonitors;
 	int current_desktop;
 	BOOL remote_app;
-	BOOL disconnect;
 	HANDLE mutex;
 	BOOL UseXThreads;
 	BOOL cursorHidden;
-	BYTE* palette;
-	BYTE palette_hwgdi[256 * 4];
 
 	HGDI_DC hdc;
 	UINT32 bitmap_size;
 	BYTE* bitmap_buffer;
-	BYTE* primary_buffer;
-	BOOL inGfxFrame;
-	BOOL graphicsReset;
 
 	BOOL frame_begin;
 	UINT16 frame_x1;
 	UINT16 frame_y1;
 	UINT16 frame_x2;
 	UINT16 frame_y2;
-
-	UINT8 red_shift_l;
-	UINT8 red_shift_r;
-	UINT8 green_shift_l;
-	UINT8 green_shift_r;
-	UINT8 blue_shift_l;
-	UINT8 blue_shift_r;
 
 	int XInputOpcode;
 
@@ -175,7 +159,6 @@ struct xf_context
 	BOOL focused;
 	BOOL use_xinput;
 	BOOL mouse_active;
-	BOOL suppress_output;
 	BOOL fullscreen_toggle;
 	BOOL controlToggle;
 	UINT32 KeyboardLayout;
@@ -183,15 +166,15 @@ struct xf_context
 	XModifierKeymap* modifierMap;
 	wArrayList* keyCombinations;
 	wArrayList* xevents;
-	char* actionScript;
+	BOOL actionScriptExists;
 
 	XSetWindowAttributes attribs;
 	BOOL complex_regions;
 	VIRTUAL_SCREEN vscreen;
 	void* xv_context;
-	TsmfClientContext* tsmf;
-	xfClipboard* clipboard;
-	CliprdrClientContext* cliprdr;
+
+	Atom* supportedAtoms;
+	unsigned long supportedAtomCount;
 
 	Atom UTF8_STRING;
 
@@ -199,6 +182,9 @@ struct xf_context
 	Atom _MOTIF_WM_HINTS;
 	Atom _NET_CURRENT_DESKTOP;
 	Atom _NET_WORKAREA;
+
+	Atom _NET_SUPPORTED;
+	ATOM _NET_SUPPORTING_WM_CHECK;
 
 	Atom _NET_WM_STATE;
 	Atom _NET_WM_STATE_FULLSCREEN;
@@ -227,9 +213,14 @@ struct xf_context
 	Atom WM_DELETE_WINDOW;
 
 	/* Channels */
+	TsmfClientContext* tsmf;
+	xfClipboard* clipboard;
+	CliprdrClientContext* cliprdr;
+	xfVideoContext* xfVideo;
 	RdpeiClientContext* rdpei;
-	RdpgfxClientContext* gfx;
 	EncomspClientContext* encomsp;
+	xfDispContext* xfDisp;
+	DispClientContext* disp;
 
 	RailClientContext* rail;
 	wHashTable* railWindows;
@@ -239,12 +230,12 @@ struct xf_context
 
 	/* value to be sent over wire for each logical client mouse button */
 	int button_map[NUM_BUTTONS_MAPPED];
+	BYTE savedMaximizedState;
 };
 
 BOOL xf_create_window(xfContext* xfc);
 void xf_toggle_fullscreen(xfContext* xfc);
 void xf_toggle_control(xfContext* xfc);
-BOOL xf_post_connect(freerdp* instance);
 
 void xf_encomsp_init(xfContext* xfc, EncomspClientContext* encomsp);
 void xf_encomsp_uninit(xfContext* xfc, EncomspClientContext* encomsp);
@@ -299,5 +290,5 @@ void xf_draw_screen(xfContext* xfc, int x, int y, int w, int h);
 
 FREERDP_API DWORD xf_exit_code_from_disconnect_reason(DWORD reason);
 
-#endif /* __XFREERDP_H */
+#endif /* FREERDP_CLIENT_X11_FREERDP_H */
 

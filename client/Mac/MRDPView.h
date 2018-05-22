@@ -1,5 +1,5 @@
-#ifndef MRDPVIEW_H
-#define MRDPVIEW_H
+#ifndef FREERDP_CLIENT_MAC_MRDPVIEW_H
+#define FREERDP_CLIENT_MAC_MRDPVIEW_H
 
 /**
  * FreeRDP: A Remote Desktop Protocol Implementation
@@ -49,7 +49,6 @@
 	BOOL skipResizeOnce;
 	BOOL saveInitialDragLoc;
 	BOOL skipMoveWindowOnce;
-	
 @public
 	NSPasteboard* pasteboard_rd;
 	NSPasteboard* pasteboard_wr;
@@ -62,12 +61,12 @@
 - (void) setCursor: (NSCursor*) cursor;
 - (void) setScrollOffset:(int)xOffset y:(int)yOffset w:(int)width h:(int)height;
 
-- (void) onPasteboardTimerFired :(NSTimer *) timer;
+- (void) onPasteboardTimerFired :(NSTimer*) timer;
 - (void) pause;
 - (void) resume;
 - (void) releaseResources;
 
-@property (assign) int is_connected;
+@property(assign) int is_connected;
 
 @end
 
@@ -83,8 +82,7 @@
 
 BOOL mac_pre_connect(freerdp* instance);
 BOOL mac_post_connect(freerdp*	instance);
-BOOL mac_authenticate(freerdp* instance, char** username, char** password, char** domain);
+BOOL mac_authenticate(freerdp* instance, char** username, char** password,
+                      char** domain);
 
-DWORD mac_client_thread(void* param);
-
-#endif // MRDPVIEW_H
+#endif /* FREERDP_CLIENT_MAC_MRDPVIEW_H */

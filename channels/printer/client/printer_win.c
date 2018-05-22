@@ -181,20 +181,24 @@ static void printer_win_free_printer(rdpPrinter* printer)
 }
 
 static rdpPrinter* printer_win_new_printer(rdpWinPrinterDriver* win_driver,
-	const char* name, const WCHAR* drivername, BOOL is_default)
+	const WCHAR* name, const WCHAR* drivername, BOOL is_default)
 {
 	rdpWinPrinter* win_printer;
-	wchar_t wname[256];
-	DWORD needed;
+	DWORD needed = 0;
+	int status;
 	PRINTER_INFO_2 *prninfo=NULL;
-	size_t charsConverted;
 
 	win_printer = (rdpWinPrinter*) calloc(1, sizeof(rdpWinPrinter));
 	if (!win_printer)
 		return NULL;
 
 	win_printer->printer.id = win_driver->id_sequence++;
-	win_printer->printer.name = _strdup(name);
+	if (ConvertFromUnicode(CP_UTF8, 0, name, -1, &win_printer->printer.name, 0, NULL, NULL) < 1)
+	{
+		free(win_printer);
+		return NULL;
+	}
+
 	if (!win_printer->printer.name)
 	{
 		free(win_printer);
@@ -206,10 +210,22 @@ static rdpPrinter* printer_win_new_printer(rdpWinPrinterDriver* win_driver,
 	win_printer->printer.FindPrintJob = printer_win_find_printjob;
 	win_printer->printer.Free = printer_win_free_printer;
 
-	swprintf(wname, 256, L"%hs", name);
-	OpenPrinter(wname, &(win_printer->hPrinter), NULL);
+	if (!OpenPrinter(name, &(win_printer->hPrinter), NULL))
+	{
+		free(win_printer->printer.name);
+		free(win_printer);
+		return NULL;
+	}
 
+	/* How many memory should be allocated for printer data */
 	GetPrinter(win_printer->hPrinter, 2, (LPBYTE) prninfo, 0, &needed);
+	if (needed == 0)
+	{
+		free(win_printer->printer.name);
+		free(win_printer);
+		return NULL;
+	}
+
 	prninfo = (PRINTER_INFO_2*) GlobalAlloc(GPTR,needed);
 	if (!prninfo)
 	{
@@ -217,13 +233,20 @@ static rdpPrinter* printer_win_new_printer(rdpWinPrinterDriver* win_driver,
 		free(win_printer);
 		return NULL;
 	}
-	GetPrinter(win_printer->hPrinter, 2, (LPBYTE) prninfo, needed, &needed);
+
+	if (!GetPrinter(win_printer->hPrinter, 2, (LPBYTE) prninfo, needed, &needed))
+	{
+		GlobalFree(prninfo);
+		free(win_printer->printer.name);
+		free(win_printer);
+		return NULL;
+	}
 
 	if (drivername)
-		win_printer->printer.driver = _wcsdup(drivername);
+		status = ConvertFromUnicode(CP_UTF8, 0, drivername, -1, &win_printer->printer.driver, 0, NULL, NULL);
 	else
-		win_printer->printer.driver = _wcsdup(prninfo->pDriverName);
-	if (!win_printer->printer.driver)
+		status = ConvertFromUnicode(CP_UTF8, 0, prninfo->pDriverName, -1, &win_printer->printer.driver, 0, NULL, NULL);
+	if (!win_printer->printer.driver || (status <= 0))
 	{
 		GlobalFree(prninfo);
 		free(win_printer->printer.name);
@@ -239,8 +262,6 @@ static rdpPrinter** printer_win_enum_printers(rdpPrinterDriver* driver)
 	rdpPrinter** printers;
 	int num_printers;
 	int i;
-	char pname[1000];
-	size_t charsConverted;
 	PRINTER_INFO_2* prninfo = NULL;
 	DWORD needed, returned;
 
@@ -270,9 +291,8 @@ static rdpPrinter** printer_win_enum_printers(rdpPrinterDriver* driver)
 
 	for (i = 0; i < (int) returned; i++)
 	{
-		wcstombs_s(&charsConverted, pname, 1000, prninfo[i].pPrinterName, _TRUNCATE);
 		printers[num_printers++] = printer_win_new_printer((rdpWinPrinterDriver*)driver,
-			pname, prninfo[i].pDriverName, 0);
+			prninfo[i].pPrinterName, prninfo[i].pDriverName, 0);
 	}
 
 	GlobalFree(prninfo);

@@ -17,18 +17,19 @@
    limitations under the License.
 */
 
-#ifndef __RFX_NEON_H
-#define __RFX_NEON_H
+#ifndef FREERDP_LIB_CODEC_RFX_NEON_H
+#define FREERDP_LIB_CODEC_RFX_NEON_H
 
 #include <freerdp/codec/rfx.h>
+#include <freerdp/api.h>
 
-void rfx_init_neon(RFX_CONTEXT * context);
+FREERDP_LOCAL void rfx_init_neon(RFX_CONTEXT* context);
 
 #ifndef RFX_INIT_SIMD
- #if defined(WITH_NEON)
-  #define RFX_INIT_SIMD(_rfx_context) rfx_init_neon(_rfx_context)
- #endif
+#if defined(WITH_NEON)
+#define RFX_INIT_SIMD(_rfx_context) rfx_init_neon(_rfx_context)
+#endif
 #endif
 
-#endif /* __RFX_NEON_H */
+#endif /* FREERDP_LIB_CODEC_RFX_NEON_H */
 

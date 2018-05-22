@@ -20,56 +20,26 @@
 #ifndef FREERDP_CODEC_CLEAR_H
 #define FREERDP_CODEC_CLEAR_H
 
-typedef struct _CLEAR_CONTEXT CLEAR_CONTEXT;
-
 #include <freerdp/api.h>
 #include <freerdp/types.h>
 
 #include <freerdp/codec/nsc.h>
 #include <freerdp/codec/color.h>
 
-#define CLEARCODEC_FLAG_GLYPH_INDEX	0x01
-#define CLEARCODEC_FLAG_GLYPH_HIT	0x02
-#define CLEARCODEC_FLAG_CACHE_RESET	0x04
-
-struct _CLEAR_GLYPH_ENTRY
-{
-	UINT32 size;
-	UINT32 count;
-	UINT32* pixels;
-};
-typedef struct _CLEAR_GLYPH_ENTRY CLEAR_GLYPH_ENTRY;
-
-struct _CLEAR_VBAR_ENTRY
-{
-	UINT32 size;
-	UINT32 count;
-	UINT32* pixels;
-};
-typedef struct _CLEAR_VBAR_ENTRY CLEAR_VBAR_ENTRY;
-
-struct _CLEAR_CONTEXT
-{
-	BOOL Compressor;
-	NSC_CONTEXT* nsc;
-	UINT32 seqNumber;
-	BYTE* TempBuffer;
-	UINT32 TempSize;
-	CLEAR_GLYPH_ENTRY GlyphCache[4000];
-	UINT32 VBarStorageCursor;
-	CLEAR_VBAR_ENTRY VBarStorage[32768];
-	UINT32 ShortVBarStorageCursor;
-	CLEAR_VBAR_ENTRY ShortVBarStorage[16384];
-};
+typedef struct _CLEAR_CONTEXT CLEAR_CONTEXT;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-FREERDP_API int clear_compress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppDstData, UINT32* pDstSize);
+FREERDP_API int clear_compress(CLEAR_CONTEXT* clear, const BYTE* pSrcData,
+                               UINT32 SrcSize, BYTE** ppDstData, UINT32* pDstSize);
 
-FREERDP_API int clear_decompress(CLEAR_CONTEXT* clear, BYTE* pSrcData, UINT32 SrcSize,
-		BYTE** ppDstData, DWORD DstFormat, int nDstStep, int nXDst, int nYDst, int nWidth, int nHeight);
+FREERDP_API INT32 clear_decompress(CLEAR_CONTEXT* clear, const BYTE* pSrcData,
+                                   UINT32 SrcSize, UINT32 nWidth, UINT32 nHeight,
+                                   BYTE* pDstData, UINT32 DstFormat, UINT32 nDstStep,
+                                   UINT32 nXDst, UINT32 nYDst, UINT32 nDstWidth, UINT32 nDstHeight,
+                                   const gdiPalette* palette);
 
 FREERDP_API BOOL clear_context_reset(CLEAR_CONTEXT* clear);
 

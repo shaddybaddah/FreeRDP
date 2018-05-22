@@ -26,6 +26,7 @@
 #define WINPR_SSL_INIT_DEFAULT 0x00
 #define WINPR_SSL_INIT_ALREADY_INITIALIZED 0x01
 #define WINPR_SSL_INIT_ENABLE_LOCKING 0x2
+#define WINPR_SSL_INIT_ENABLE_FIPS 0x4
 
 #define WINPR_SSL_CLEANUP_GLOBAL 0x01
 #define WINPR_SSL_CLEANUP_THREAD 0x02
@@ -36,6 +37,8 @@ extern "C" {
 
 WINPR_API BOOL winpr_InitializeSSL(DWORD flags);
 WINPR_API BOOL winpr_CleanupSSL(DWORD flags);
+
+WINPR_API BOOL winpr_FIPSMode(void);
 
 #ifdef	__cplusplus
 }

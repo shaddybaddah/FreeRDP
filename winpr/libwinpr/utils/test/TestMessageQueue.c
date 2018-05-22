@@ -3,7 +3,7 @@
 #include <winpr/thread.h>
 #include <winpr/collections.h>
 
-static void* message_queue_consumer_thread(void* arg)
+static DWORD WINAPI message_queue_consumer_thread(LPVOID arg)
 {
 	wMessage message;
 	wMessageQueue* queue;
@@ -17,11 +17,11 @@ static void* message_queue_consumer_thread(void* arg)
 			if (message.id == WMQ_QUIT)
 				break;
 
-			printf("Message.Type: %d\n", message.id);
+			printf("Message.Type: %"PRIu32"\n", message.id);
 		}
 	}
 
-	return NULL;
+	return 0;
 }
 
 int TestMessageQueue(int argc, char* argv[])
@@ -35,7 +35,7 @@ int TestMessageQueue(int argc, char* argv[])
 		return 1;
 	}
 
-	if (!(thread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) message_queue_consumer_thread, (void*) queue, 0, NULL)))
+	if (!(thread = CreateThread(NULL, 0, message_queue_consumer_thread, (void*) queue, 0, NULL)))
 	{
 		printf("failed to create thread\n");
 		MessageQueue_Free(queue);

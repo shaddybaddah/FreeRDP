@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#ifndef __NSC_TYPES_H
-#define __NSC_TYPES_H
+#ifndef FREERDP_LIB_CODEC_NSC_TYPES_H
+#define FREERDP_LIB_CODEC_NSC_TYPES_H
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -45,10 +45,10 @@ struct _NSC_CONTEXT_PRIV
 	UINT32 PlaneBuffersLength;	/* Lengths of each plane buffer */
 
 	/* profilers */
-	PROFILER_DEFINE(prof_nsc_rle_decompress_data);
-	PROFILER_DEFINE(prof_nsc_decode);
-	PROFILER_DEFINE(prof_nsc_rle_compress_data);
-	PROFILER_DEFINE(prof_nsc_encode);
+	PROFILER_DEFINE(prof_nsc_rle_decompress_data)
+	PROFILER_DEFINE(prof_nsc_decode)
+	PROFILER_DEFINE(prof_nsc_rle_compress_data)
+	PROFILER_DEFINE(prof_nsc_encode)
 };
 
-#endif /* __NSC_TYPES_H */
+#endif /* FREERDP_LIB_CODEC_NSC_TYPES_H */

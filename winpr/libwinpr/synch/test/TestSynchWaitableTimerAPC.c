@@ -12,7 +12,7 @@ struct apc_data
 };
 typedef struct apc_data APC_DATA;
 
-VOID CALLBACK TimerAPCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dwTimerHighValue)
+static VOID CALLBACK TimerAPCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dwTimerHighValue)
 {
 	APC_DATA* apcData;
 	UINT32 CurrentTime = GetTickCount();
@@ -22,7 +22,7 @@ VOID CALLBACK TimerAPCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dwTimerHig
 
 	apcData = (APC_DATA*) lpArg;
 
-	printf("TimerAPCProc: time: %d\n", CurrentTime - apcData->StartTime);
+	printf("TimerAPCProc: time: %"PRIu32"\n", CurrentTime - apcData->StartTime);
 
 	g_Count++;
 
@@ -95,7 +95,7 @@ int TestSynchWaitableTimerAPC(int argc, char* argv[])
 		if (rc == 0x000000C0L) /* WAIT_IO_COMPLETION */
 			continue;
 
-		printf("Failed to wait for completion event (%u)\n", GetLastError());
+		printf("Failed to wait for completion event (%"PRIu32")\n", GetLastError());
 		goto cleanup;
 	}
 
@@ -108,20 +108,6 @@ cleanup:
 		CloseHandle(g_Event);
 	free(apcData);
 
-#ifdef __APPLE__
-	if (status == 0)
-	{
-		printf("%s: Error, this test is currently expected not to succeed on this platform.\n",
-			__FUNCTION__);
-		status = -1;
-	}
-	else
-	{
-		printf("%s: This test is currently expected to fail on this platform.\n",
-			__FUNCTION__);
-		status = 0;
-	}
-#endif
 	return status;
 }
 

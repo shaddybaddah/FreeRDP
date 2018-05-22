@@ -2,6 +2,10 @@
 
 NULL =
 
+DEB_HOST_ARCH=$(shell dpkg-architecture -qDEB_HOST_ARCH)
+
+SANATIZE_ADDRESS = -DWITH_SANITIZE_ADDRESS=ON
+
 DEB_CMAKE_EXTRA_FLAGS :=  -DCMAKE_SKIP_RPATH=FALSE \
                           -DCMAKE_SKIP_INSTALL_RPATH=FALSE \
                           -DWITH_PULSE=ON \
@@ -16,10 +20,11 @@ DEB_CMAKE_EXTRA_FLAGS :=  -DCMAKE_SKIP_RPATH=FALSE \
                           -DCHANNEL_URBDRC_CLIENT=ON \
                           -DWITH_SERVER=ON \
                           -DBUILD_TESTING=OFF \
-                          -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
+                          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                           -DCMAKE_INSTALL_PREFIX=/opt/freerdp-nightly/ \
                           -DCMAKE_INSTALL_INCLUDEDIR=include \
                           -DCMAKE_INSTALL_LIBDIR=lib \
+                          $(SANATIZE_ADDRESS) \
                           $(NULL)
 
 %:

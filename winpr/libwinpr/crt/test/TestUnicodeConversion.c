@@ -101,13 +101,13 @@ void string_hexdump(BYTE* data, int length)
 			line = 16;
 
 		for (i = 0; i < line; i++)
-			printf("%02x ", p[i]);
+			printf("%02"PRIx8" ", p[i]);
 
 		for (; i < 16; i++)
 			printf("   ");
 
 		for (i = 0; i < line; i++)
-			printf("%c", (p[i] >= 0x20 && p[i] < 0x7F) ? p[i] : '.');
+			printf("%c", (p[i] >= 0x20 && p[i] < 0x7F) ? (char) p[i] : '.');
 
 		printf("\n");
 
@@ -138,7 +138,7 @@ int convert_utf8_to_utf16(BYTE* lpMultiByteStr, BYTE* expected_lpWideCharStr, in
 		return -1;
 	}
 
-	lpWideCharStr = (LPWSTR) malloc(cchWideChar * sizeof(WCHAR));
+	lpWideCharStr = (LPWSTR) calloc(cchWideChar, sizeof(WCHAR));
 	if (!lpWideCharStr)
 	{
 		printf("MultiByteToWideChar: unable to allocate memory for test\n");
@@ -152,7 +152,7 @@ int convert_utf8_to_utf16(BYTE* lpMultiByteStr, BYTE* expected_lpWideCharStr, in
 	if (!length)
 	{
 		DWORD error = GetLastError();
-		printf("MultiByteToWideChar error: 0x%08X\n", error);
+		printf("MultiByteToWideChar error: 0x%08"PRIX32"\n", error);
 		return -1;
 	}
 
@@ -216,7 +216,7 @@ int convert_utf16_to_utf8(BYTE* lpWideCharStr, BYTE* expected_lpMultiByteStr, in
 		printf("WideCharToMultiByte: unable to allocate memory for test\n");
 		return -1;
 	}
-	lpMultiByteStr[cbMultiByte - 1] = 0xFF; /* should be overwritten if null terminator is inserted properly */
+	lpMultiByteStr[cbMultiByte - 1] = (CHAR)0xFF; /* should be overwritten if null terminator is inserted properly */
 	length = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR) lpWideCharStr, cchWideChar + 1, lpMultiByteStr, cbMultiByte, NULL, NULL);
 
 	printf("WideCharToMultiByte converted length (BYTE): %d\n", length);
@@ -224,7 +224,7 @@ int convert_utf16_to_utf8(BYTE* lpWideCharStr, BYTE* expected_lpMultiByteStr, in
 	if (!length)
 	{
 		DWORD error = GetLastError();
-		printf("WideCharToMultiByte error: 0x%08X\n", error);
+		printf("WideCharToMultiByte error: 0x%08"PRIX32"\n", error);
 		return -1;
 	}
 
@@ -292,9 +292,9 @@ BOOL test_unicode_uppercasing(BYTE* lower, BYTE* upper)
 
 BOOL test_ConvertFromUnicode_wrapper()
 {
+	BYTE src1[] = "\x52\x00\x49\x00\x43\x00\x48\x00\x20\x00\x54\x00\x45\x00\x58\x00\x54\x00\x20\x00\x46\x00\x4f\x00\x52\x00\x4d\x00\x41\x00\x54\x00\x40\x00\x40\x00\x40\x00";
+	BYTE src2[] = "\x52\x00\x49\x00\x43\x00\x48\x00\x20\x00\x54\x00\x45\x00\x58\x00\x54\x00\x20\x00\x46\x00\x4f\x00\x52\x00\x4d\x00\x41\x00\x54\x00\x00\x00";
 	/*               00  01  02  03  04  05  06  07  08  09  10  11  12  13  14  15  16  17  18 */
-	WCHAR src1[] = { 'R','I','C','H',' ','T','E','X','T',' ','F','O','R','M','A','T','@','@','@' };
-	WCHAR src2[] = { 'R','I','C','H',' ','T','E','X','T',' ','F','O','R','M','A','T', 0 };
 	CHAR  cmp0[] = { 'R','I','C','H',' ','T','E','X','T',' ','F','O','R','M','A','T', 0 };
 	CHAR* dst = NULL;
 	int i;
@@ -306,7 +306,7 @@ BOOL test_ConvertFromUnicode_wrapper()
 	printf("Input UTF16 String:\n");
 	string_hexdump((BYTE*) src1, 19 * sizeof(WCHAR));
 
-	i = ConvertFromUnicode(CP_UTF8, 0, src1, 16, &dst, 0, NULL, NULL);
+	i = ConvertFromUnicode(CP_UTF8, 0, (WCHAR*)src1, 16, &dst, 0, NULL, NULL);
 	if (i != 16)
 	{
 		fprintf(stderr, "ConvertFromUnicode failure A1: unexpectedly returned %d instead of 16\n", i);
@@ -336,9 +336,9 @@ BOOL test_ConvertFromUnicode_wrapper()
 	/* Test null-terminated string */
 
 	printf("Input UTF16 String:\n");
-	string_hexdump((BYTE*) src2, (_wcslen(src2) + 1 ) * sizeof(WCHAR));
+	string_hexdump((BYTE*) src2, (_wcslen((WCHAR*)src2) + 1 ) * sizeof(WCHAR));
 
-	i = ConvertFromUnicode(CP_UTF8, 0, src2, -1, &dst, 0, NULL, NULL);
+	i = ConvertFromUnicode(CP_UTF8, 0, (WCHAR*)src2, -1, &dst, 0, NULL, NULL);
 	if (i != 17)
 	{
 		fprintf(stderr, "ConvertFromUnicode failure B1: unexpectedly returned %d instead of 17\n", i);
@@ -379,7 +379,7 @@ BOOL test_ConvertToUnicode_wrapper()
 	/*               00  01  02  03  04  05  06  07  08  09  10  11  12  13  14  15  16  17  18 */
 	CHAR  src1[] = { 'R','I','C','H',' ','T','E','X','T',' ','F','O','R','M','A','T','@','@','@' };
 	CHAR  src2[] = { 'R','I','C','H',' ','T','E','X','T',' ','F','O','R','M','A','T', 0 };
-	WCHAR cmp0[] = { 'R','I','C','H',' ','T','E','X','T',' ','F','O','R','M','A','T', 0 };
+	BYTE cmp0[] = "\x52\x00\x49\x00\x43\x00\x48\x00\x20\x00\x54\x00\x45\x00\x58\x00\x54\x00\x20\x00\x46\x00\x4f\x00\x52\x00\x4d\x00\x41\x00\x54\x00\x00\x00";
 	WCHAR* dst = NULL;
 	int i;
 
@@ -406,7 +406,7 @@ BOOL test_ConvertToUnicode_wrapper()
 		fprintf(stderr, "ConvertToUnicode failure A3: dst length is %d instead of 16\n", i);
 		goto fail;
 	}
-	if (_wcscmp(dst, cmp0))
+	if (_wcscmp(dst, (WCHAR*)cmp0))
 	{
 		fprintf(stderr, "ConvertToUnicode failure A4: data mismatch\n");
 		goto fail;
@@ -438,7 +438,7 @@ BOOL test_ConvertToUnicode_wrapper()
 		fprintf(stderr, "ConvertToUnicode failure B3: dst length is %d instead of 16\n", i);
 		goto fail;
 	}
-	if (_wcscmp(dst, cmp0))
+	if (_wcscmp(dst, (WCHAR*)cmp0))
 	{
 		fprintf(stderr, "ConvertToUnicode failure B: data mismatch\n");
 		goto fail;
@@ -469,6 +469,7 @@ int TestUnicodeConversion(int argc, char* argv[])
 
 	if (convert_utf16_to_utf8(c_cedilla_UTF16, c_cedilla_UTF8, c_cedilla_cbMultiByte) < 1)
 		return -1;
+
 	
 	/* English */
 
@@ -581,7 +582,7 @@ int TestUnicodeConversion(int argc, char* argv[])
 		WCHAR *dst = NULL;
 		int num;
 		num = ConvertToUnicode(CP_UTF8, 0, src, 16, &dst, 0);
-		printf("ConvertToUnicode returned %d dst=%p\n", num, dst);
+		printf("ConvertToUnicode returned %d dst=%p\n", num, (void*) dst);
 		string_hexdump((BYTE*)dst, num * 2 + 2);
 
 	}

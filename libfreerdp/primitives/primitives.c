@@ -22,66 +22,65 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <winpr/synch.h>
 #include <freerdp/primitives.h>
 
 #include "prim_internal.h"
 
 /* Singleton pointer used throughout the program when requested. */
-static primitives_t* pPrimitives = NULL;
+static primitives_t pPrimitives = { 0 };
+static primitives_t pPrimitivesGeneric = { 0 };
+static INIT_ONCE generic_primitives_InitOnce = INIT_ONCE_STATIC_INIT;
+static INIT_ONCE primitives_InitOnce = INIT_ONCE_STATIC_INIT;
+
 
 /* ------------------------------------------------------------------------- */
-void primitives_init(void)
+static BOOL CALLBACK primitives_init_generic(PINIT_ONCE once, PVOID param, PVOID* context)
 {
-	if (!pPrimitives)
-	{
-		pPrimitives = calloc(1, sizeof(primitives_t));
-
-		if (!pPrimitives)
-			return;
-	}
-
-	/* Now call each section's initialization routine. */
-	primitives_init_add(pPrimitives);
-	primitives_init_andor(pPrimitives);
-	primitives_init_alphaComp(pPrimitives);
-	primitives_init_copy(pPrimitives);
-	primitives_init_set(pPrimitives);
-	primitives_init_shift(pPrimitives);
-	primitives_init_sign(pPrimitives);
-	primitives_init_colors(pPrimitives);
-	primitives_init_YCoCg(pPrimitives);
-	primitives_init_YUV(pPrimitives);
-	primitives_init_16to32bpp(pPrimitives);
+	primitives_init_add(&pPrimitivesGeneric);
+	primitives_init_andor(&pPrimitivesGeneric);
+	primitives_init_alphaComp(&pPrimitivesGeneric);
+	primitives_init_copy(&pPrimitivesGeneric);
+	primitives_init_set(&pPrimitivesGeneric);
+	primitives_init_shift(&pPrimitivesGeneric);
+	primitives_init_sign(&pPrimitivesGeneric);
+	primitives_init_colors(&pPrimitivesGeneric);
+	primitives_init_YCoCg(&pPrimitivesGeneric);
+	primitives_init_YUV(&pPrimitivesGeneric);
+	return TRUE;
 }
+
+#if defined(HAVE_OPTIMIZED_PRIMITIVES)
+static BOOL CALLBACK primitives_init(PINIT_ONCE once, PVOID param, PVOID* context)
+{
+	/* Now call each section's initialization routine. */
+	primitives_init_add_opt(&pPrimitives);
+	primitives_init_andor_opt(&pPrimitives);
+	primitives_init_alphaComp_opt(&pPrimitives);
+	primitives_init_copy_opt(&pPrimitives);
+	primitives_init_set_opt(&pPrimitives);
+	primitives_init_shift_opt(&pPrimitives);
+	primitives_init_sign_opt(&pPrimitives);
+	primitives_init_colors_opt(&pPrimitives);
+	primitives_init_YCoCg_opt(&pPrimitives);
+	primitives_init_YUV_opt(&pPrimitives);
+	return TRUE;
+}
+#endif
 
 /* ------------------------------------------------------------------------- */
 primitives_t* primitives_get(void)
 {
-	if (!pPrimitives)
-		primitives_init();
-
-	return pPrimitives;
+	InitOnceExecuteOnce(&generic_primitives_InitOnce, primitives_init_generic, NULL, NULL);
+#if defined(HAVE_OPTIMIZED_PRIMITIVES)
+	InitOnceExecuteOnce(&primitives_InitOnce, primitives_init, NULL, NULL);
+#endif
+	return &pPrimitives;
 }
 
-/* ------------------------------------------------------------------------- */
-void primitives_deinit(void)
+primitives_t* primitives_get_generic(void)
 {
-	if (!pPrimitives)
-		return;
-
-	/* Call each section's de-initialization routine. */
-	primitives_deinit_add(pPrimitives);
-	primitives_deinit_andor(pPrimitives);
-	primitives_deinit_alphaComp(pPrimitives);
-	primitives_deinit_copy(pPrimitives);
-	primitives_deinit_set(pPrimitives);
-	primitives_deinit_shift(pPrimitives);
-	primitives_deinit_sign(pPrimitives);
-	primitives_deinit_colors(pPrimitives);
-	primitives_deinit_YCoCg(pPrimitives);
-	primitives_deinit_YUV(pPrimitives);
-	primitives_deinit_16to32bpp(pPrimitives);
-
-	free((void*) pPrimitives);
-	pPrimitives = NULL;
+	InitOnceExecuteOnce(&generic_primitives_InitOnce, primitives_init_generic, NULL, NULL);
+	return &pPrimitivesGeneric;
 }
+

@@ -67,14 +67,24 @@
 
 #include "../pipe/pipe.h"
 
+/* clock_gettime is not implemented on OSX prior to 10.12 */
 #ifdef __MACH__
 
 #include <mach/mach_time.h>
 
+#ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME 0
-#define CLOCK_MONOTONIC 0
+#endif
 
-int clock_gettime(int clk_id, struct timespec *t)
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 0
+#endif
+
+/* clock_gettime is not implemented on OSX prior to 10.12 */
+int _mach_clock_gettime(int clk_id, struct timespec *t);
+
+int 
+_mach_clock_gettime(int clk_id, struct timespec *t)
 {
 	UINT64 time;
 	double seconds;
@@ -88,6 +98,25 @@ int clock_gettime(int clk_id, struct timespec *t)
 	t->tv_nsec = nseconds;
 	return 0;
 }
+
+/* if clock_gettime is declared, then __CLOCK_AVAILABILITY will be defined */
+#ifdef __CLOCK_AVAILABILITY
+/* If we compiled with Mac OSX 10.12 or later, then clock_gettime will be declared
+ * * but it may be NULL at runtime. So we need to check before using it. */
+int _mach_safe_clock_gettime(int clk_id, struct timespec *t);
+
+int
+_mach_safe_clock_gettime(int clk_id, struct timespec *t) {
+        if( clock_gettime ) {
+                    return clock_gettime(clk_id, t);
+                        }
+            return _mach_clock_gettime(clk_id, t);
+}
+
+#define clock_gettime _mach_safe_clock_gettime
+#else
+#define clock_gettime _mach_clock_gettime
+#endif
 
 #endif
 
@@ -285,7 +314,7 @@ DWORD WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds)
 
 DWORD WaitForSingleObjectEx(HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertable)
 {
-	WLog_ERR(TAG, "%s: Not implemented.");
+	WLog_ERR(TAG, "%s: Not implemented.", __FUNCTION__);
 	SetLastError(ERROR_NOT_SUPPORTED);
 	return WAIT_FAILED;
 }
@@ -316,7 +345,7 @@ DWORD WaitForMultipleObjects(DWORD nCount, const HANDLE *lpHandles, BOOL bWaitAl
 
 	if (!nCount || (nCount > MAXIMUM_WAIT_OBJECTS))
 	{
-		WLog_ERR(TAG, "invalid handles count(%d)", nCount);
+		WLog_ERR(TAG, "invalid handles count(%"PRIu32")", nCount);
 		return WAIT_FAILED;
 	}
 
@@ -423,10 +452,10 @@ DWORD WaitForMultipleObjects(DWORD nCount, const HANDLE *lpHandles, BOOL bWaitAl
 		if (status < 0)
 		{
 #ifdef HAVE_POLL_H
-			WLog_ERR(TAG, "poll() handle %d (%d) failure [%d] %s", index, nCount, errno,
+			WLog_ERR(TAG, "poll() handle %d (%"PRIu32") failure [%d] %s", index, nCount, errno,
 					 strerror(errno));
 #else
-			WLog_ERR(TAG, "select() handle %d (%d) failure [%d] %s", index, nCount, errno,
+			WLog_ERR(TAG, "select() handle %d (%"PRIu32") failure [%d] %s", index, nCount, errno,
 					 strerror(errno));
 #endif
 			winpr_log_backtrace(TAG, WLOG_ERROR, 20);
@@ -525,7 +554,7 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE *lpHandles, BOOL bWait
 
 DWORD SignalObjectAndWait(HANDLE hObjectToSignal, HANDLE hObjectToWaitOn, DWORD dwMilliseconds, BOOL bAlertable)
 {
-	WLog_ERR(TAG, "%s: Not implemented.");
+	WLog_ERR(TAG, "%s: Not implemented.", __FUNCTION__);
 	SetLastError(ERROR_NOT_SUPPORTED);
 	return WAIT_FAILED;
 }

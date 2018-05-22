@@ -17,9 +17,12 @@
  * limitations under the License.
  */
 
-#ifndef __WLFREERDP_H
-#define __WLFREERDP_H
+#ifndef FREERDP_CLIENT_WAYLAND_FREERDP_H
+#define FREERDP_CLIENT_WAYLAND_FREERDP_H
 
+#include <freerdp/client/encomsp.h>
+#include <freerdp/client/rdpei.h>
+#include <freerdp/gdi/gfx.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/log.h>
 #include <winpr/wtypes.h>
@@ -34,12 +37,18 @@ struct wlf_context
 {
 	rdpContext context;
 
-	UwacDisplay *display;
-	UwacWindow *window;
+	UwacDisplay* display;
+	HANDLE displayHandle;
+	UwacWindow* window;
 
 	BOOL waitingFrameDone;
 	BOOL haveDamage;
+
+	/* Channels */
+	RdpeiClientContext* rdpei;
+	RdpgfxClientContext* gfx;
+	EncomspClientContext* encomsp;
 };
 
-#endif /* __WLFREERDP_H */
+#endif /* FREERDP_CLIENT_WAYLAND_FREERDP_H */
 

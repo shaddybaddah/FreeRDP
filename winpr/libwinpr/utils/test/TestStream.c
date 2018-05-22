@@ -1,9 +1,8 @@
-
 #include <winpr/crt.h>
 #include <winpr/print.h>
 #include <winpr/stream.h>
 
-static BOOL TestStream_Verify(wStream* s, int mincap, int len, int pos)
+static BOOL TestStream_Verify(wStream* s, int mincap, int len, size_t pos)
 {
 	if (Stream_Buffer(s) == NULL)
 	{
@@ -18,46 +17,46 @@ static BOOL TestStream_Verify(wStream* s, int mincap, int len, int pos)
 	if (Stream_Pointer(s) < Stream_Buffer(s))
 	{
 		printf("stream pointer (%p) or buffer (%p) is invalid\n",
-			Stream_Pointer(s), Stream_Buffer(s));
+			(void*) Stream_Pointer(s), (void*) Stream_Buffer(s));
 		return FALSE;
 	}
 	if (Stream_Capacity(s) < mincap) {
-		printf("stream capacity is %ld but minimum expected value is %d\n",
+		printf("stream capacity is %"PRIuz" but minimum expected value is %d\n",
 			Stream_Capacity(s), mincap);
 		return FALSE;
 	}
 	if (Stream_Length(s) != len) {
-		printf("stream has unexpected length (%ld instead of %d)\n",
+		printf("stream has unexpected length (%"PRIuz" instead of %d)\n",
 			Stream_Length(s), len);
 		return FALSE;
 	}
 	if (Stream_GetPosition(s) != pos)
 	{
-		printf("stream has unexpected position (%ld instead of %d)\n",
+		printf("stream has unexpected position (%"PRIuz" instead of %"PRIuz")\n",
 			Stream_GetPosition(s), pos);
 		return FALSE;
 	}
 	if (Stream_GetPosition(s) > Stream_Length(s))
 	{
-		printf("stream position (%ld) exceeds length (%ld)\n",
+		printf("stream position (%"PRIuz") exceeds length (%"PRIuz")\n",
 			Stream_GetPosition(s), Stream_Length(s));
 		return FALSE;
 	}
 	if (Stream_GetPosition(s) > Stream_Capacity(s))
 	{
-		printf("stream position (%ld) exceeds capacity (%ld)\n",
+		printf("stream position (%"PRIuz") exceeds capacity (%"PRIuz")\n",
 			Stream_GetPosition(s), Stream_Capacity(s));
 		return FALSE;
 	}
 	if (Stream_Length(s) > Stream_Capacity(s))
 	{
-		printf("stream length (%ld) exceeds capacity (%ld)\n",
+		printf("stream length (%"PRIuz") exceeds capacity (%"PRIuz")\n",
 			Stream_Length(s), Stream_Capacity(s));
 		return FALSE;
 	}
 	if (Stream_GetRemainingLength(s) != len - pos)
 	{
-		printf("stream remaining length (%ld instead of %d)\n",
+		printf("stream remaining length (%"PRIuz" instead of %"PRIuz")\n",
 			Stream_GetRemainingLength(s), len - pos);
 		return FALSE;
 	}
@@ -145,7 +144,7 @@ fail:
 
 static BOOL TestStream_Extent(UINT32 maxSize)
 {
-	int i;
+	UINT32 i;
 	wStream *s = NULL;
 	BOOL result = FALSE;
 
@@ -173,7 +172,7 @@ static BOOL TestStream_Extent(UINT32 maxSize)
 
 		if (!TestStream_Verify(s, i, i, i))
 		{
-			printf("%s: failed to verify stream in iteration %d\n", __FUNCTION__, i);
+			printf("%s: failed to verify stream in iteration %"PRIu32"\n", __FUNCTION__, i);
 			goto fail;
 		}
 	}
@@ -208,7 +207,7 @@ fail:
     _r = FALSE;                                                              \
   }                                                                          \
   for (_i=0; _i<sizeof(_t); _i++) {                                          \
-    if (((BYTE*)&_a)[_i] != _p[_i]) {                                        \
+    if (((_a >> (_i * 8)) & 0xFF) != _p[_i]) {                               \
       printf("%s: test2 " #_t "_LE failed\n", __FUNCTION__);                 \
       _r = FALSE;                                                            \
       break;                                                                 \
@@ -224,7 +223,7 @@ fail:
     _r = FALSE;                                                              \
   }                                                                          \
   for (_i=0; _i<sizeof(_t); _i++) {                                          \
-    if (((BYTE*)&_a)[_i] != _p[sizeof(_t)-_i-1]) {                           \
+    if (((_a >> (_i * 8)) & 0xFF) != _p[sizeof(_t)-_i-1]) {                  \
       printf("%s: test2 " #_t "_BE failed\n", __FUNCTION__);                 \
       _r = FALSE;                                                            \
       break;                                                                 \

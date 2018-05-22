@@ -20,7 +20,7 @@ int TestLibraryGetProcAddress(int argc, char* argv[])
 
 	if (!GetModuleFileNameA(NULL, LibraryPath, PATHCCH_MAX_CCH))
 	{
-		printf("%s: GetModuleFilenameA failed: 0x%08X\n", __FUNCTION__, GetLastError());
+		printf("%s: GetModuleFilenameA failed: 0x%08"PRIX32"\n", __FUNCTION__, GetLastError());
 		return -1;
 	}
 
@@ -31,17 +31,16 @@ int TestLibraryGetProcAddress(int argc, char* argv[])
 		printf("%s: Error identifying module directory path\n", __FUNCTION__);
 		return -1;
 	}
-	*p = 0;
 
+	*p = 0;
 	NativePathCchAppendA(LibraryPath, PATHCCH_MAX_CCH, "TestLibraryA");
 	SharedLibraryExtension = PathGetSharedLibraryExtensionA(PATH_SHARED_LIB_EXT_WITH_DOT);
 	NativePathCchAddExtensionA(LibraryPath, PATHCCH_MAX_CCH, SharedLibraryExtension);
-
 	printf("%s: Loading Library: '%s'\n", __FUNCTION__, LibraryPath);
 
 	if (!(library = LoadLibraryA(LibraryPath)))
 	{
-		printf("%s: LoadLibraryA failure: 0x%08X\n", __FUNCTION__, GetLastError());
+		printf("%s: LoadLibraryA failure: 0x%08"PRIX32"\n", __FUNCTION__, GetLastError());
 		return -1;
 	}
 
@@ -59,7 +58,6 @@ int TestLibraryGetProcAddress(int argc, char* argv[])
 
 	a = 2;
 	b = 3;
-
 	c = pFunctionA(a, b); /* LibraryA / FunctionA multiplies a and b */
 
 	if (c != (a * b))
@@ -70,7 +68,6 @@ int TestLibraryGetProcAddress(int argc, char* argv[])
 
 	a = 10;
 	b = 5;
-
 	c = pFunctionB(a, b); /* LibraryA / FunctionB divides a by b */
 
 	if (c != (a / b))
@@ -81,7 +78,7 @@ int TestLibraryGetProcAddress(int argc, char* argv[])
 
 	if (!FreeLibrary(library))
 	{
-		printf("%s: FreeLibrary failure: 0x%08X\n", __FUNCTION__, GetLastError());
+		printf("%s: FreeLibrary failure: 0x%08"PRIX32"\n", __FUNCTION__, GetLastError());
 		return -1;
 	}
 

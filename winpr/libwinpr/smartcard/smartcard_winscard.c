@@ -202,7 +202,6 @@ int WinSCard_InitializeSCardApi(void)
 	WINSCARD_LOAD_PROC(SCardListReadersWithDeviceInstanceIdA);
 	WINSCARD_LOAD_PROC(SCardListReadersWithDeviceInstanceIdW);
 	WINSCARD_LOAD_PROC(SCardAudit);
-
 	return 1;
 }
 

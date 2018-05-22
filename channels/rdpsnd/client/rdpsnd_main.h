@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#ifndef __RDPSND_MAIN_H
-#define __RDPSND_MAIN_H
+#ifndef FREERDP_CHANNEL_RDPSND_CLIENT_MAIN_H
+#define FREERDP_CHANNEL_RDPSND_CLIENT_MAIN_H
 
 #include <freerdp/api.h>
 #include <freerdp/svc.h>
@@ -30,11 +30,11 @@
 #define TAG CHANNELS_TAG("rdpsnd.client")
 
 #if defined(WITH_DEBUG_SND)
-#define DEBUG_SND(fmt, ...) WLog_DBG(TAG, fmt, ## __VA_ARGS__)
+#define DEBUG_SND(...) WLog_DBG(TAG, __VA_ARGS__)
 #else
-#define DEBUG_SND(fmt, ...) do { } while (0)
+#define DEBUG_SND(...) do { } while (0)
 #endif
 
 UINT rdpsnd_virtual_channel_write(rdpsndPlugin* rdpsnd, wStream* s);
 
-#endif /* __RDPSND_MAIN_H */
+#endif /* FREERDP_CHANNEL_RDPSND_CLIENT_MAIN_H */

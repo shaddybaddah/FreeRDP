@@ -36,12 +36,14 @@ static BOOL g_MessagePump = FALSE;
 #endif
 
 #include <freerdp/server/shadow.h>
+#define TAG SERVER_TAG("shadow")
 
 int main(int argc, char** argv)
 {
 	MSG msg;
 	int status = 0;
 	DWORD dwExitCode;
+	rdpSettings* settings;
 	rdpShadowServer* server;
 
 	shadow_subsystem_set_entry_builtin(NULL);
@@ -51,8 +53,15 @@ int main(int argc, char** argv)
 	if (!server)
 	{
 		status = -1;
+		WLog_ERR(TAG, "Server new failed");
 		goto fail_server_new;
 	}
+
+	settings = server->settings;
+
+	settings->NlaSecurity = FALSE;
+	settings->TlsSecurity = TRUE;
+	settings->RdpSecurity = TRUE;
 
 #ifdef WITH_SHADOW_X11
 	server->authentication = TRUE;
@@ -63,14 +72,21 @@ int main(int argc, char** argv)
 	if ((status = shadow_server_parse_command_line(server, argc, argv)) < 0)
 	{
 		shadow_server_command_line_status_print(server, argc, argv, status);
+		WLog_ERR(TAG, "Problem parsing the command line.");
 		goto fail_parse_command_line;
 	}
 
 	if ((status = shadow_server_init(server)) < 0)
+	{
+		WLog_ERR(TAG, "Server initialization failed.");
 		goto fail_server_init;
+	}
 
 	if ((status = shadow_server_start(server)) < 0)
+	{
+		WLog_ERR(TAG, "Failed to start server.");
 		goto fail_server_start;
+	}
 
 	if (g_MessagePump)
 	{
@@ -86,8 +102,7 @@ int main(int argc, char** argv)
 	if (!GetExitCodeThread(server->thread, &dwExitCode))
 		status = -1;
 	else
-		status = (int)dwExitCode;
-
+		status = (int) dwExitCode;
 
 fail_server_start:
 	shadow_server_uninit(server);

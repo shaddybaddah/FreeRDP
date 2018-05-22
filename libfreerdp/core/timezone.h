@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __TIMEZONE_H
-#define __TIMEZONE_H
+#ifndef FREERDP_LIB_CORE_TIMEZONE_H
+#define FREERDP_LIB_CORE_TIMEZONE_H
 
 #include "rdp.h"
 
@@ -28,17 +28,19 @@
 
 #include <freerdp/log.h>
 #include <freerdp/freerdp.h>
+#include <freerdp/api.h>
 
 #include <winpr/stream.h>
 
-BOOL rdp_read_client_time_zone(wStream* s, rdpSettings* settings);
-BOOL rdp_write_client_time_zone(wStream* s, rdpSettings* settings);
+FREERDP_LOCAL BOOL rdp_read_client_time_zone(wStream* s, rdpSettings* settings);
+FREERDP_LOCAL BOOL rdp_write_client_time_zone(wStream* s,
+        rdpSettings* settings);
 
 #define TIMEZONE_TAG FREERDP_TAG("core.timezone")
 #ifdef WITH_DEBUG_TIMEZONE
-#define DEBUG_TIMEZONE(fmt, ...) WLog_DBG(TIMEZONE_TAG, fmt, ## __VA_ARGS__)
+#define DEBUG_TIMEZONE(...) WLog_DBG(TIMEZONE_TAG, __VA_ARGS__)
 #else
-#define DEBUG_TIMEZONE(fmt, ...) do { } while (0)
+#define DEBUG_TIMEZONE(...) do { } while (0)
 #endif
 
-#endif /* __TIMEZONE_H */
+#endif /* FREERDP_LIB_CORE_TIMEZONE_H */

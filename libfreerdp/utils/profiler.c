@@ -32,13 +32,14 @@
 PROFILER* profiler_create(char* name)
 {
 	PROFILER* profiler;
-
 	profiler = (PROFILER*) malloc(sizeof(PROFILER));
+
 	if (!profiler)
 		return NULL;
-	
+
 	profiler->name = name;
 	profiler->stopwatch = stopwatch_create();
+
 	if (!profiler->stopwatch)
 	{
 		free(profiler);
@@ -49,9 +50,8 @@ PROFILER* profiler_create(char* name)
 }
 
 void profiler_free(PROFILER* profiler)
-{	
+{
 	stopwatch_free(profiler->stopwatch);
-	
 	free(profiler);
 }
 
@@ -65,24 +65,23 @@ void profiler_exit(PROFILER* profiler)
 	stopwatch_stop(profiler->stopwatch);
 }
 
-void profiler_print_header()
+void profiler_print_header(void)
 {
-	WLog_INFO(TAG,  "                                             |-----------------------|");
-	WLog_INFO(TAG,  "                PROFILER                     |    elapsed seconds    |");
-	WLog_INFO(TAG,  "|--------------------------------------------|-----------------------|");
-	WLog_INFO(TAG,  "| code section                  | iterations |     total |      avg. |");
-	WLog_INFO(TAG,  "|-------------------------------|------------|-----------|-----------|");
+	WLog_INFO(TAG, "-------------------------------+------------+-------------+-----------+-------");
+	WLog_INFO(TAG, "PROFILER NAME                  |      COUNT |       TOTAL |       AVG |    IPS");
+	WLog_INFO(TAG, "-------------------------------+------------+-------------+-----------+-------");
 }
 
 void profiler_print(PROFILER* profiler)
 {
-	double elapsed_sec = stopwatch_get_elapsed_time_in_seconds(profiler->stopwatch);
-	double avg_sec = elapsed_sec / (double) profiler->stopwatch->count;
-	WLog_INFO(TAG,  "| %-30.30s| %10du | %9f | %9f |",
-			  profiler->name, profiler->stopwatch->count, elapsed_sec, avg_sec);
+	double s = stopwatch_get_elapsed_time_in_seconds(profiler->stopwatch);
+	double avg = profiler->stopwatch->count == 0 ? 0 : s / profiler->stopwatch->count;
+
+	WLog_INFO(TAG, "%-30s | %10u | %10.4fs | %8.6fs | %6.0f",
+		profiler->name, profiler->stopwatch->count, s, avg, profiler->stopwatch->count / s);
 }
 
-void profiler_print_footer()
+void profiler_print_footer(void)
 {
-	WLog_INFO(TAG,  "|--------------------------------------------------------------------|");
+	WLog_INFO(TAG, "-------------------------------+------------+-------------+-----------+-------");
 }

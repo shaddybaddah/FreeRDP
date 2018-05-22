@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_CORE_CLIENT_H
-#define FREERDP_CORE_CLIENT_H
+#ifndef FREERDP_LIB_CORE_CLIENT_H
+#define FREERDP_LIB_CORE_CLIENT_H
 
 #include <winpr/crt.h>
 #include <winpr/stream.h>
@@ -29,18 +29,22 @@
 #include <freerdp/svc.h>
 #include <freerdp/peer.h>
 #include <freerdp/addin.h>
+#include <freerdp/api.h>
 
 #include <freerdp/client/channels.h>
 #include <freerdp/client/drdynvc.h>
 #include <freerdp/channels/channels.h>
 
-#define CHANNEL_MAX_COUNT 30
+#define CHANNEL_MAX_COUNT 31
 
 struct rdp_channel_client_data
 {
 	PVIRTUALCHANNELENTRY entry;
+	PVIRTUALCHANNELENTRYEX entryEx;
 	PCHANNEL_INIT_EVENT_FN pChannelInitEventProc;
+	PCHANNEL_INIT_EVENT_EX_FN pChannelInitEventProcEx;
 	void* pInitHandle;
+	void* lpUserParam;
 };
 typedef struct rdp_channel_client_data CHANNEL_CLIENT_DATA;
 
@@ -52,7 +56,9 @@ struct rdp_channel_open_data
 	int flags;
 	void* pInterface;
 	rdpChannels* channels;
+	void* lpUserParam;
 	PCHANNEL_OPEN_EVENT_FN pChannelOpenEventProc;
+	PCHANNEL_OPEN_EVENT_EX_FN pChannelOpenEventProcEx;
 };
 typedef struct rdp_channel_open_data CHANNEL_OPEN_DATA;
 
@@ -93,7 +99,6 @@ struct rdp_channels
 
 	/* control for entry into MyVirtualChannelInit */
 	int can_call_init;
-	rdpSettings* settings;
 
 	/* true once freerdp_channels_post_connect is called */
 	BOOL connected;
@@ -104,6 +109,19 @@ struct rdp_channels
 	wMessageQueue* queue;
 
 	DrdynvcClientContext* drdynvc;
+	CRITICAL_SECTION channelsLock;
+
+	wHashTable* openHandles;
 };
 
-#endif /* FREERDP_CORE_CLIENT_H */
+FREERDP_LOCAL rdpChannels* freerdp_channels_new(freerdp* instance);
+FREERDP_LOCAL UINT freerdp_channels_disconnect(rdpChannels* channels,
+        freerdp* instance);
+FREERDP_LOCAL void freerdp_channels_close(rdpChannels* channels,
+        freerdp* instance);
+FREERDP_LOCAL void freerdp_channels_free(rdpChannels* channels);
+FREERDP_LOCAL UINT freerdp_channels_pre_connect(rdpChannels* channels,
+        freerdp* instance);
+FREERDP_LOCAL UINT freerdp_channels_post_connect(rdpChannels* channels,
+        freerdp* instance);
+#endif /* FREERDP_LIB_CORE_CLIENT_H */

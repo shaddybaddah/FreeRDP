@@ -30,9 +30,9 @@ struct _wBitStream
 {
 	const BYTE* buffer;
 	BYTE* pointer;
-	int position;
-	int length;
-	int capacity;
+        UINT32 position;
+        UINT32 length;
+        UINT32 capacity;
 	UINT32 mask;
 	UINT32 offset;
 	UINT32 prefetch;
@@ -107,7 +107,7 @@ extern "C" {
 				} \
 			} \
 		} else { \
-			WLog_WARN("com.winpr.bitstream", "warning: BitStream_Shift(%d)", _nbits); \
+			WLog_WARN("com.winpr.bitstream", "warning: BitStream_Shift(%u)", (unsigned)_nbits); \
 		} \
 	} while(0)
 

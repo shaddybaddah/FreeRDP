@@ -23,58 +23,65 @@
 #include <freerdp/codec/region.h>
 
 
-static BOOL compareRectangles(const RECTANGLE_16 *src1, const RECTANGLE_16 *src2, int nb)
+static BOOL compareRectangles(const RECTANGLE_16* src1, const RECTANGLE_16* src2, int nb)
 {
 	int i;
-	for (i = 0; i< nb; i++, src1++, src2++)
+
+	for (i = 0; i < nb; i++, src1++, src2++)
 	{
 		if (memcmp(src1, src2, sizeof(RECTANGLE_16)))
 		{
-			fprintf(stderr, "expecting rect %d (%d,%d-%d,%d) and have (%d,%d-%d,%d)\n",
-					i, src2->left, src2->top, src2->right, src2->bottom,
-					src1->left, src1->top, src1->right, src1->bottom
-					);
+			fprintf(stderr,
+			        "expecting rect %d (%"PRIu16",%"PRIu16"-%"PRIu16",%"PRIu16") and have (%"PRIu16",%"PRIu16"-%"PRIu16",%"PRIu16")\n",
+			        i, src2->left, src2->top, src2->right, src2->bottom,
+			        src1->left, src1->top, src1->right, src1->bottom
+			       );
 			return FALSE;
 		}
 	}
+
 	return TRUE;
 }
 
 
-static int test_basic() {
+static int test_basic(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
-
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	/* R1 + R2 ==> disjointed rects */
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r2 = {150, 301, 250, 401};
-
-	RECTANGLE_16 r1_r2[] = {
+	RECTANGLE_16 r1_r2[] =
+	{
 		{0,   101, 200, 201},
 		{150, 301, 250, 401}
 	};
-
 	/* r1 */
 	region16_init(&region);
+
 	if (!region16_union_rect(&region, &region, &r1))
-		goto out;;
+		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 1 || memcmp(rects, &r1, sizeof(RECTANGLE_16)))
 		goto out;
 
 	/* r1 + r2 */
 	if (!region16_union_rect(&region, &region, &r2))
-		goto out;;
-	rects = region16_rects(&region, &nbRects);
-	if (!rects || nbRects != 2 || !compareRectangles(rects, r1_r2, nbRects))
 		goto out;
 
+	rects = region16_rects(&region, &nbRects);
+
+	if (!rects || nbRects != 2 || !compareRectangles(rects, r1_r2, nbRects))
+		goto out;
 
 	/* clear region */
 	region16_clear(&region);
 	region16_rects(&region, &nbRects);
+
 	if (nbRects)
 		goto out;
 
@@ -85,20 +92,20 @@ out:
 }
 
 
-static int test_r1_r3() {
+static int test_r1_r3(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
-
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r3 = {150, 151, 250, 251};
-	RECTANGLE_16 r1_r3[] = {
+	RECTANGLE_16 r1_r3[] =
+	{
 		{  0, 101, 200, 151},
 		{  0, 151, 250, 201},
 		{150, 201, 250, 251}
 	};
-
 	region16_init(&region);
 	/*
 	 * +===============================================================
@@ -115,20 +122,26 @@ static int test_r1_r3() {
 	/* R1 + R3  */
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r3))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 3 || !compareRectangles(rects, r1_r3, nbRects))
 		goto out;
 
-
 	/* R3 + R1  */
 	region16_clear(&region);
+
 	if (!region16_union_rect(&region, &region, &r3))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 3 || !compareRectangles(rects, r1_r3, nbRects))
 		goto out;
 
@@ -139,12 +152,12 @@ out:
 }
 
 
-static int test_r9_r10() {
+static int test_r9_r10(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
-
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	/*
 	 * +===============================================================
 	 * |
@@ -155,23 +168,27 @@ static int test_r9_r10() {
 	 * ||  |   | |  =====>   |        |
 	 * ||  |   | |           |        |
 	 * ||  |   | |           |        |
- 	 * |+--|   |-+           +--+---+-+
- 	 * |   +---+                +---+
+	 * |+--|   |-+           +--+---+-+
+	 * |   +---+                +---+
 	 */
 	RECTANGLE_16 r9 = {  0, 100, 400, 200};
 	RECTANGLE_16 r10 = {200,  0, 300, 300};
-	RECTANGLE_16 r9_r10[] = {
-			{200,   0, 300, 100},
-			{  0, 100, 400, 200},
-			{200, 200, 300, 300},
+	RECTANGLE_16 r9_r10[] =
+	{
+		{200,   0, 300, 100},
+		{  0, 100, 400, 200},
+		{200, 200, 300, 300},
 	};
-
 	region16_init(&region);
+
 	if (!region16_union_rect(&region, &region, &r9))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r10))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 3 || !compareRectangles(rects, r9_r10, nbRects))
 		goto out;
 
@@ -182,22 +199,22 @@ out:
 }
 
 
-static int test_r1_r5() {
+static int test_r1_r5(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
-
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r5 = {150, 121, 300, 131};
-
-	RECTANGLE_16 r1_r5[] = {
+	RECTANGLE_16 r1_r5[] =
+	{
 		{  0, 101, 200, 121},
 		{  0, 121, 300, 131},
 		{  0, 131, 200, 201}
 	};
-
 	region16_init(&region);
+
 	/*
 	 * +===============================================================
 	 * |
@@ -207,18 +224,20 @@ static int test_r1_r5() {
 	 * ||     |  r5   |  =====>  |             |
 	 * ||     +-------+          +--------+----+
 	 * ||        |               |        |
- 	 * |+--------+               +--------+
- 	 * |
- 	 *
+	 * |+--------+               +--------+
+	 * |
+	 *
 	 */
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r5))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 3 || !compareRectangles(rects, r1_r5, nbRects))
 		goto out;
-
 
 	retCode = 0;
 out:
@@ -226,15 +245,14 @@ out:
 	return retCode;
 }
 
-static int test_r1_r6() {
+static int test_r1_r6(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
-
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r6 = {150, 121, 170, 131};
-
 	region16_init(&region);
 	/*
 	 * +===============================================================
@@ -245,15 +263,19 @@ static int test_r1_r6() {
 	 * ||   |r6| |  =====>   |        |
 	 * ||   +--+ |           |        |
 	 * ||        |           |        |
- 	 * |+--------+           +--------+
- 	 * |
+	 * |+--------+           +--------+
+	 * |
 	 */
 	region16_clear(&region);
+
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r6))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 1 || !compareRectangles(rects, &r1, nbRects))
 		goto out;
 
@@ -264,19 +286,20 @@ out:
 }
 
 
-static int test_r1_r2_r4() {
+static int test_r1_r2_r4(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r2 = {150, 301, 250, 401};
 	RECTANGLE_16 r4 = {150, 251, 250, 301};
-	RECTANGLE_16 r1_r2_r4[] = {
+	RECTANGLE_16 r1_r2_r4[] =
+	{
 		{  0, 101, 200, 201},
 		{150, 251, 250, 401}
 	};
-
 	/*
 	 * +===============================================================
 	 * |
@@ -295,13 +318,18 @@ static int test_r1_r2_r4() {
 	 *
 	 */
 	region16_init(&region);
+
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r2))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r4))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 2 || !compareRectangles(rects, r1_r2_r4, nbRects))
 		goto out;
 
@@ -312,23 +340,23 @@ out:
 }
 
 
-static int test_r1_r7_r8() {
+static int test_r1_r7_r8(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r7 = {300, 101, 500, 201};
 	RECTANGLE_16 r8 = {150, 121, 400, 131};
-
-	RECTANGLE_16 r1_r7_r8[] = {
+	RECTANGLE_16 r1_r7_r8[] =
+	{
 		{  0, 101, 200, 121},
 		{300, 101, 500, 121},
 		{  0, 121, 500, 131},
 		{  0, 131, 200, 201},
 		{300, 131, 500, 201},
 	};
-
 	/*
 	 * +===============================================================
 	 * |
@@ -338,39 +366,54 @@ static int test_r1_r7_r8() {
 	 * ||   |   r8       |    |   =====>  |                     |
 	 * ||   +------------+    |           +--------+---+--------+
 	 * ||        |   |        |           |        |   |        |
- 	 * |+--------+   +--------+           +--------+   +--------+
- 	 * |
+	 * |+--------+   +--------+           +--------+   +--------+
+	 * |
 	 */
 	region16_init(&region);
+
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r7))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r8))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 5 || !compareRectangles(rects, r1_r7_r8, nbRects))
 		goto out;
 
 	region16_clear(&region);
+
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r8))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r7))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 5 || !compareRectangles(rects, r1_r7_r8, nbRects))
 		goto out;
 
 	region16_clear(&region);
+
 	if (!region16_union_rect(&region, &region, &r8))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r7))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 5 || !compareRectangles(rects, r1_r7_r8, nbRects))
 		goto out;
 
@@ -381,30 +424,31 @@ out:
 }
 
 
-static int test_r1_r2_r3_r4() {
+static int test_r1_r2_r3_r4(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r2 = {150, 301, 250, 401};
 	RECTANGLE_16 r3 = {150, 151, 250, 251};
 	RECTANGLE_16 r4 = {150, 251, 250, 301};
-
-	RECTANGLE_16 r1_r2_r3[] = {
+	RECTANGLE_16 r1_r2_r3[] =
+	{
 		{  0, 101, 200, 151},
 		{  0, 151, 250, 201},
 		{150, 201, 250, 251},
 		{150, 301, 250, 401}
 	};
-
-	RECTANGLE_16 r1_r2_r3_r4[] = {
+	RECTANGLE_16 r1_r2_r3_r4[] =
+	{
 		{  0, 101, 200, 151},
 		{  0, 151, 250, 201},
 		{150, 201, 250, 401}
 	};
-
 	region16_init(&region);
+
 	/*
 	 * +===============================================================
 	 * |
@@ -422,11 +466,15 @@ static int test_r1_r2_r3_r4() {
 	 */
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r2))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r3))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 4 || !compareRectangles(rects, r1_r2_r3, 4))
 		goto out;
 
@@ -435,7 +483,7 @@ static int test_r1_r2_r3_r4() {
 	 * |
 	 * |+-----+                 +-----+
 	 * ||     |                 |     |
- 	 * |+-----+--------+        +-----+--------+
+	 * |+-----+--------+        +-----+--------+
 	 * ||              |  ==>   |              |
 	 * |+-----+--------+        +-----+--------+
 	 * |  	  |        |              |        |
@@ -448,7 +496,9 @@ static int test_r1_r2_r3_r4() {
 	 */
 	if (!region16_union_rect(&region, &region, &r4))
 		goto out;
+
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 3 || !compareRectangles(rects, r1_r2_r3_r4, 3))
 		goto out;
 
@@ -459,7 +509,7 @@ out:
 }
 
 
-static int test_from_weston()
+static int test_from_weston(void)
 {
 	/*
 	 * 0: 0,0 -> 640,32 (w=640 h=32)
@@ -468,19 +518,19 @@ static int test_from_weston()
 	 */
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0,   0, 640,  32};
 	RECTANGLE_16 r2 = {236, 169, 268, 201};
 	RECTANGLE_16 r3 = {246, 258, 278, 290};
-
-	RECTANGLE_16 r1_r2_r3[] = {
-			{  0,   0, 640,  32},
-			{236, 169, 268, 201},
-			{246, 258, 278, 290}
+	RECTANGLE_16 r1_r2_r3[] =
+	{
+		{  0,   0, 640,  32},
+		{236, 169, 268, 201},
+		{246, 258, 278, 290}
 	};
-
 	region16_init(&region);
+
 	/*
 	 * +===============================================================
 	 * |+-------------------------------------------------------------+
@@ -498,12 +548,15 @@ static int test_from_weston()
 	 */
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r2))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r3))
 		goto out;
 
 	rects = region16_rects(&region, &nbRects);
+
 	if (!rects || nbRects != 3 || !compareRectangles(rects, r1_r2_r3, 3))
 		goto out;
 
@@ -513,18 +566,18 @@ out:
 	return retCode;
 }
 
-static int test_r1_inter_r3() {
+static int test_r1_inter_r3(void)
+{
 	REGION16 region, intersection;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r3 = {150, 151, 250, 251};
-
-	RECTANGLE_16 r1_inter_r3[] = {
+	RECTANGLE_16 r1_inter_r3[] =
+	{
 		{150, 151, 200, 201},
 	};
-
 	region16_init(&region);
 	region16_init(&intersection);
 
@@ -541,35 +594,38 @@ static int test_r1_inter_r3() {
 	 */
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_intersects_rect(&region, &r3))
 		goto out;
 
 	if (!region16_intersect_rect(&intersection, &region, &r3))
 		goto out;
+
 	rects = region16_rects(&intersection, &nbRects);
+
 	if (!rects || nbRects != 1 || !compareRectangles(rects, r1_inter_r3, nbRects))
 		goto out;
-
 
 	retCode = 0;
 out:
 	region16_uninit(&region);
+	region16_uninit(&intersection);
 	return retCode;
 }
 
-static int test_r1_r3_inter_r11() {
+static int test_r1_r3_inter_r11(void)
+{
 	REGION16 region, intersection;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects;
 	RECTANGLE_16 r1 = {  0, 101, 200, 201};
 	RECTANGLE_16 r3 = {150, 151, 250, 251};
-	RECTANGLE_16 r11 ={170, 151, 600, 301};
-
-	RECTANGLE_16 r1_r3_inter_r11[] = {
+	RECTANGLE_16 r11 = {170, 151, 600, 301};
+	RECTANGLE_16 r1_r3_inter_r11[] =
+	{
 		{170, 151, 250, 251},
 	};
-
 	region16_init(&region);
 	region16_init(&intersection);
 
@@ -595,6 +651,7 @@ static int test_r1_r3_inter_r11() {
 	 */
 	if (!region16_union_rect(&region, &region, &r1))
 		goto out;
+
 	if (!region16_union_rect(&region, &region, &r3))
 		goto out;
 
@@ -603,7 +660,9 @@ static int test_r1_r3_inter_r11() {
 
 	if (!region16_intersect_rect(&intersection, &region, &r11))
 		goto out;
+
 	rects = region16_rects(&intersection, &nbRects);
+
 	if (!rects || nbRects != 1 || !compareRectangles(rects, r1_r3_inter_r11, nbRects))
 		goto out;
 
@@ -614,27 +673,28 @@ out:
 	return retCode;
 }
 
-static int test_norbert_case() {
+static int test_norbert_case(void)
+{
 	REGION16 region, intersection;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects, i;
-
-	RECTANGLE_16 inRectangles[5] = {
-			{1680,    0, 1920,  242},
-			{ 294,  242,  971,  776},
-			{1680,  242, 1920,  776},
-			{1680,  776, 1920, 1036},
-			{   2, 1040,   53, 1078}
+	const RECTANGLE_16* rects;
+	UINT32 nbRects, i;
+	RECTANGLE_16 inRectangles[5] =
+	{
+		{1680,    0, 1920,  242},
+		{ 294,  242,  971,  776},
+		{1680,  242, 1920,  776},
+		{1680,  776, 1920, 1036},
+		{   2, 1040,   53, 1078}
 	};
-
-	RECTANGLE_16 screenRect = {
+	RECTANGLE_16 screenRect =
+	{
 		0, 0, 1920, 1080
 	};
-	RECTANGLE_16 expected_inter_extents = {
+	RECTANGLE_16 expected_inter_extents =
+	{
 		2, 0, 1920, 1078
 	};
-
 	region16_init(&region);
 	region16_init(&intersection);
 
@@ -654,14 +714,14 @@ static int test_norbert_case() {
 	 *      |                                        |      |
 	 *      |                                        |  R[3]|
 	 * 1036 | |                                      +------+
-	 * 1040 | +----+                                        
+	 * 1040 | +----+
 	 *      | |R[4]|                         Union of R[0-4]|
 	 * 1078 | +----+    -    -    -    -    -    -    -    -+
-	 * 1080 |                                       
-	 *   
-	 *   
+	 * 1080 |
+	 *
+	 *
 	 * The result is union of R[0] - R[4].
-	 * After intersected with the full screen rect, the 
+	 * After intersected with the full screen rect, the
 	 * result should keep the same.
 	 */
 	for (i = 0; i < 5; i++)
@@ -670,16 +730,18 @@ static int test_norbert_case() {
 			goto out;
 	}
 
-	if (!compareRectangles(region16_extents(&region), &expected_inter_extents, 1) )
+	if (!compareRectangles(region16_extents(&region), &expected_inter_extents, 1))
 		goto out;
 
 	if (!region16_intersect_rect(&intersection, &region, &screenRect))
 		goto out;
+
 	rects = region16_rects(&intersection, &nbRects);
+
 	if (!rects || nbRects != 5 || !compareRectangles(rects, inRectangles, nbRects))
 		goto out;
 
-	if (!compareRectangles(region16_extents(&intersection), &expected_inter_extents, 1) )
+	if (!compareRectangles(region16_extents(&intersection), &expected_inter_extents, 1))
 		goto out;
 
 	retCode = 0;
@@ -689,57 +751,66 @@ out:
 	return retCode;
 }
 
-static int test_norbert2_case() {
+static int test_norbert2_case(void)
+{
 	REGION16 region;
 	int retCode = -1;
-	const RECTANGLE_16 *rects;
-	int nbRects = 0;
+	const RECTANGLE_16* rects;
+	UINT32 nbRects = 0;
 	RECTANGLE_16 rect1 = {  464, 696,   476,  709 };
 	RECTANGLE_16 rect2 = {    0,   0,  1024,   32 };
-
 	region16_init(&region);
 
-	if (!region16_union_rect(&region, &region, &rect1)) {
+	if (!region16_union_rect(&region, &region, &rect1))
+	{
 		fprintf(stderr, "%s: Error 1 - region16_union_rect failed\n", __FUNCTION__);
 		goto out;
 	}
 
-	if (!(rects = region16_rects(&region, &nbRects))) {
+	if (!(rects = region16_rects(&region, &nbRects)))
+	{
 		fprintf(stderr, "%s: Error 2 - region16_rects failed\n", __FUNCTION__);
 		goto out;
 	}
 
-	if (nbRects != 1) {
-		fprintf(stderr, "%s: Error 3 - expected nbRects == 1 but got %d\n", __FUNCTION__, nbRects);
+	if (nbRects != 1)
+	{
+		fprintf(stderr, "%s: Error 3 - expected nbRects == 1 but got %"PRIu32"\n", __FUNCTION__, nbRects);
 		goto out;
 	}
 
-	if (!compareRectangles(&rects[0], &rect1, 1)) {
+	if (!compareRectangles(&rects[0], &rect1, 1))
+	{
 		fprintf(stderr, "%s: Error 4 - compare failed\n", __FUNCTION__);
 		goto out;
 	}
 
-	if (!region16_union_rect(&region, &region, &rect2)) {
+	if (!region16_union_rect(&region, &region, &rect2))
+	{
 		fprintf(stderr, "%s: Error 5 - region16_union_rect failed\n", __FUNCTION__);
 		goto out;
 	}
 
-	if (!(rects = region16_rects(&region, &nbRects))) {
+	if (!(rects = region16_rects(&region, &nbRects)))
+	{
 		fprintf(stderr, "%s: Error 6 - region16_rects failed\n", __FUNCTION__);
 		goto out;
 	}
 
-	if (nbRects != 2) {
-		fprintf(stderr, "%s: Error 7 - expected nbRects == 2 but got %d\n", __FUNCTION__, nbRects);
+	if (nbRects != 2)
+	{
+		fprintf(stderr, "%s: Error 7 - expected nbRects == 2 but got %"PRIu32"\n", __FUNCTION__, nbRects);
 		goto out;
 	}
 
-	if (!compareRectangles(&rects[0], &rect2, 1)) {
+	if (!compareRectangles(&rects[0], &rect2, 1))
+	{
 		fprintf(stderr, "%s: Error 8 - compare failed\n", __FUNCTION__);
 		goto out;
 	}
 
-	if (!compareRectangles(&rects[1], &rect1, 1)) {
+	if (!compareRectangles(&rects[1], &rect1, 1))
+	{
 		fprintf(stderr, "%s: Error 9 - compare failed\n", __FUNCTION__);
 		goto out;
 	}
@@ -750,27 +821,29 @@ out:
 	return retCode;
 }
 
-static int test_empty_rectangle() {
+static int test_empty_rectangle(void)
+{
 	REGION16 region, intersection;
 	int retCode = -1;
 	int i;
-
-	RECTANGLE_16 emptyRectangles[3] = {
+	RECTANGLE_16 emptyRectangles[3] =
+	{
 		{   0,    0,    0,    0},
 		{  10,   10,   10,   11},
 		{  10,   10,   11,   10}
 	};
-
-	RECTANGLE_16 firstRect = {
+	RECTANGLE_16 firstRect =
+	{
 		0, 0, 100, 100
 	};
-	RECTANGLE_16 anotherRect = {
+	RECTANGLE_16 anotherRect =
+	{
 		100, 100,  200,  200
 	};
-	RECTANGLE_16 expected_inter_extents = {
-		0, 0, 0, 0 
+	RECTANGLE_16 expected_inter_extents =
+	{
+		0, 0, 0, 0
 	};
-
 	region16_init(&region);
 	region16_init(&intersection);
 
@@ -792,7 +865,7 @@ static int test_empty_rectangle() {
 	if (!region16_intersect_rect(&region, &region, &anotherRect))
 		goto out;
 
-	if (!compareRectangles(region16_extents(&region), &expected_inter_extents, 1) )
+	if (!compareRectangles(region16_extents(&region), &expected_inter_extents, 1))
 		goto out;
 
 	if (!region16_is_empty(&region))
@@ -808,13 +881,15 @@ out:
 	return retCode;
 }
 
-typedef int (*TestFunction)();
-struct UnitaryTest {
-	const char *name;
+typedef int (*TestFunction)(void);
+struct UnitaryTest
+{
+	const char* name;
 	TestFunction func;
 };
 
-struct UnitaryTest tests[] = {
+static struct UnitaryTest tests[] =
+{
 	{"Basic trivial tests", 	test_basic},
 	{"R1+R3 and R3+R1", 		test_r1_r3},
 	{"R1+R5",					test_r1_r5},
@@ -825,7 +900,7 @@ struct UnitaryTest tests[] = {
 	{"R1+R2+R3+R4",     		test_r1_r2_r3_r4},
 	{"data from weston",        test_from_weston},
 	{"R1 & R3",					test_r1_inter_r3},
-	{"(R1+R3)&R11 (band merge)",test_r1_r3_inter_r11},
+	{"(R1+R3)&R11 (band merge)", test_r1_r3_inter_r11},
 	{"norbert's case",			test_norbert_case},
 	{"norbert's case 2", 		test_norbert2_case},
 	{"empty rectangle case",	test_empty_rectangle},
@@ -843,6 +918,7 @@ int TestFreeRDPRegion(int argc, char* argv[])
 		testNb++;
 		fprintf(stderr, "%d: %s\n", testNb, tests[i].name);
 		retCode = tests[i].func();
+
 		if (retCode < 0)
 			break;
 	}

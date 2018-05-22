@@ -435,8 +435,8 @@
 #define TEST_MIX \
 		((last_line == 0 && pixel == mix) || \
 				(last_line != 0 && pixel == (ypixel ^ mix)))
-#define TEST_FOM (TEST_FILL || TEST_MIX)
-#define TEST_COLOR (pixel == last_pixel)
+#define TEST_FOM TEST_FILL || TEST_MIX
+#define TEST_COLOR pixel == last_pixel
 #define TEST_BICOLOR \
 		( \
 				(pixel != last_pixel) && \
@@ -456,11 +456,9 @@
 	bicolor_spin = 0; \
 		}
 
-int freerdp_bitmap_compress(char* srcData, int width, int height,
+int freerdp_bitmap_compress(const char* srcData, int width, int height,
 		wStream* s, int bpp, int byte_limit, int start_line, wStream* temp_s, int e)
 {
-	char *line;
-	char *last_line;
 	char fom_mask[8192]; /* good for up to 64K bitmap */
 	int lines_sent;
 	int pixel;
@@ -472,7 +470,7 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 	int bicolor2;
 	int bicolor_spin;
 	int end;
-	int i;
+	size_t i;
 	int out_count;
 	int ypixel;
 	int last_ypixel;
@@ -485,7 +483,6 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 
 	Stream_SetPosition(temp_s, 0);
 	fom_mask_len = 0;
-	last_line = 0;
 	lines_sent = 0;
 	end = width + e;
 	count = 0;
@@ -502,9 +499,10 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 
 	if ((bpp == 15) || (bpp == 16))
 	{
+		const char* line = srcData + width * start_line * 2;
+		const char *last_line = NULL;
 		mix = (bpp == 15) ? 0xBA1F : 0xFFFF;
 		out_count = end * 2;
-		line = srcData + width * start_line * 2;
 
 		while (start_line >= 0 && out_count < 32768)
 		{
@@ -561,7 +559,7 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 					mix_count = 0;
 				}
 
-				if (!TEST_COLOR)
+				if (!(TEST_COLOR))
 				{
 					if (color_count > 3 &&
 							color_count >= fill_count &&
@@ -609,7 +607,7 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 					bicolor_spin = 0;
 				}
 
-				if (!TEST_FOM)
+				if (!(TEST_FOM))
 				{
 					if (fom_count > 3 &&
 							fom_count >= fill_count &&
@@ -794,9 +792,10 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 	}
 	else if (bpp == 24)
 	{
+		const char* line = srcData + width * start_line * 4;
+		const char *last_line = NULL;
 		mix = 0xFFFFFF;
 		out_count = end * 3;
-		line = srcData + width * start_line * 4;
 
 		while (start_line >= 0 && out_count < 32768)
 		{
@@ -853,7 +852,7 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 					mix_count = 0;
 				}
 
-				if (!TEST_COLOR)
+				if (!(TEST_COLOR))
 				{
 					if (color_count > 3 &&
 							color_count >= fill_count &&
@@ -901,7 +900,7 @@ int freerdp_bitmap_compress(char* srcData, int width, int height,
 					bicolor_spin = 0;
 				}
 
-				if (!TEST_FOM)
+				if (!(TEST_FOM))
 				{
 					if (fom_count > 3 &&
 							fom_count >= fill_count &&

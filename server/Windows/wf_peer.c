@@ -40,6 +40,8 @@
 #include "wf_peer.h"
 #include <freerdp/peer.h>
 
+#define TAG SERVER_TAG("windows")
+
 #define SERVER_KEY "Software\\"FREERDP_VENDOR_STRING"\\" \
 	FREERDP_PRODUCT_STRING
 
@@ -110,7 +112,7 @@ BOOL wf_peer_post_connect(freerdp_peer* client)
 	if ((settings->DesktopWidth != wfi->servscreen_width) || (settings->DesktopHeight != wfi->servscreen_height))
 	{
 		/*
-		WLog_DBG(TAG, "Client requested resolution %dx%d, but will resize to %dx%d",
+		WLog_DBG(TAG, "Client requested resolution %"PRIu32"x%"PRIu32", but will resize to %dx%d",
 			settings->DesktopWidth, settings->DesktopHeight, wfi->servscreen_width, wfi->servscreen_height);
 			*/
 
@@ -165,7 +167,7 @@ BOOL wf_peer_accepted(freerdp_listener* instance, freerdp_peer* client)
 	return TRUE;
 }
 
-DWORD WINAPI wf_peer_socket_listener(LPVOID lpParam)
+static DWORD WINAPI wf_peer_socket_listener(LPVOID lpParam)
 {
 	int i, fds;
 	int rcount;
@@ -237,7 +239,7 @@ BOOL wf_peer_read_settings(freerdp_peer* client)
 	return TRUE;
 }
 
-DWORD WINAPI wf_peer_main_loop(LPVOID lpParam)
+static DWORD WINAPI wf_peer_main_loop(LPVOID lpParam)
 {
 	wfInfo* wfi;
 	DWORD nCount;
@@ -279,10 +281,10 @@ DWORD WINAPI wf_peer_main_loop(LPVOID lpParam)
 	if (!client->Initialize(client))
 		goto fail_client_initialize;
 
+	context = (wfPeerContext*) client->context;
+	
 	if (context->socketClose)
 		goto fail_socked_closed;
-
-	context = (wfPeerContext*) client->context;
 
 	wfi = context->info;
 

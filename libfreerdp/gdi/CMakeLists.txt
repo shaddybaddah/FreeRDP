@@ -21,22 +21,19 @@ set(MODULE_PREFIX "FREERDP_GDI")
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 set(${MODULE_PREFIX}_SRCS
-	8bpp.c
-	16bpp.c
-	32bpp.c
 	bitmap.c
 	brush.c
 	clipping.c
 	dc.c
 	drawing.c
 	line.c
-	palette.c
 	pen.c
 	region.c
 	shape.c
 	graphics.c
 	graphics.h
 	gfx.c
+	video.c
 	gdi.c
 	gdi.h)
 

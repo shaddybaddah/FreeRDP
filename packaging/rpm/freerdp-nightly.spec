@@ -7,6 +7,15 @@
 
 
 %define   INSTALL_PREFIX /opt/freerdp-nightly/
+
+# do not add provides for libs provided by this package
+# or it could possibly mess with system provided packages
+# which depend on freerdp libs
+%global __provides_exclude_from ^%{INSTALL_PREFIX}.*$
+
+# do not require our own libs
+%global __requires_exclude ^(libfreerdp.*|libwinpr).*$
+
 Name:           freerdp-nightly
 Version:        2.0
 Release:        0
@@ -16,6 +25,7 @@ Url:            http://www.freerdp.com
 Group:          Productivity/Networking/Other
 Source0:        %{name}-%{version}.tar.bz2
 #Source1:        %{name}-rpmlintrc
+Source1:        source_version
 BuildRequires:   gcc-c++
 BuildRequires:  cmake >= 2.8.12
 BuildRequires: libxkbfile-devel
@@ -35,6 +45,7 @@ BuildRequires: pcsc-lite-devel
 BuildRequires: uuid-devel
 BuildRequires: libxml2-devel
 BuildRequires: zlib-devel
+BuildRequires: krb5-devel
 
 # (Open)Suse
 %if %{defined suse_version}
@@ -55,7 +66,7 @@ BuildRequires: libjpeg-devel
 BuildRequires: libavutil-devel
 %endif
 # fedora 21+
-%if 0%{?fedora} >= 21
+%if 0%{?fedora} >= 21 || 0%{?rhel} >= 7
 BuildRequires: docbook-style-xsl
 BuildRequires: libxslt
 BuildRequires: pkgconfig
@@ -68,9 +79,12 @@ BuildRequires: systemd-devel
 BuildRequires: dbus-glib-devel
 BuildRequires: gstreamer1-devel
 BuildRequires: gstreamer1-plugins-base-devel
-BuildRequires: libwayland-client-devel
 BuildRequires: libjpeg-turbo-devel
 %endif 
+
+%if 0%{?fedora} >= 21 || 0%{?rhel} >= 8
+BuildRequires: libwayland-client-devel
+%endif
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 
@@ -89,8 +103,11 @@ based on freerdp and winpr.
 
 %prep
 %setup -q
+cd %{_topdir}/BUILD
+cp %{_topdir}/SOURCES/source_version freerdp-nightly-%{version}/.source_version
 
 %build
+
 %cmake  -DCMAKE_SKIP_RPATH=FALSE \
         -DCMAKE_SKIP_INSTALL_RPATH=FALSE \
         -DWITH_PULSE=ON \
@@ -101,14 +118,20 @@ based on freerdp and winpr.
         -DWITH_JPEG=ON \
         -DWITH_GSTREAMER_0_10=ON \
         -DWITH_GSM=ON \
+%if %{defined rhel} && 0%{?rhel} <= 7
+        -DWITH_WAYLAND=OFF \
+%endif
+        -DWITH_GSSAPI=ON \
         -DCHANNEL_URBDRC=ON \
         -DCHANNEL_URBDRC_CLIENT=ON \
         -DWITH_SERVER=ON \
         -DBUILD_TESTING=OFF \
-        -DCMAKE_BUILD_TYPE=RELWITHDEBINFO \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DCMAKE_INSTALL_PREFIX=%{INSTALL_PREFIX} \
 %if %{defined suse_version}
-	-DCMAKE_NO_BUILTIN_CHRPATH=ON \
+        -DCMAKE_NO_BUILTIN_CHRPATH=ON \
+%else
+        -DWITH_SANITIZE_ADDRESS=ON \
 %endif
         -DCMAKE_INSTALL_LIBDIR=%{_lib}
 
@@ -119,7 +142,7 @@ make %{?_smp_mflags}
 %cmake_install
 %endif
 
-%if %{defined fedora}
+%if %{defined fedora} || %{defined rhel}
 rm -rf $RPM_BUILD_ROOT
 make install DESTDIR=$RPM_BUILD_ROOT
 %endif 
@@ -135,10 +158,14 @@ export NO_BRP_CHECK_RPATH true
 %dir %{INSTALL_PREFIX}/share/
 %dir %{INSTALL_PREFIX}/share/man/
 %dir %{INSTALL_PREFIX}/share/man/man1
+%dir %{INSTALL_PREFIX}/share/man/man7
 %{INSTALL_PREFIX}/%{_lib}/*.so.*
 %{INSTALL_PREFIX}/bin/
 %{INSTALL_PREFIX}/share/man/man1/xfreerdp.1*
-%{INSTALL_PREFIX}/share/man/man1/wlog.1*
+%{INSTALL_PREFIX}/share/man/man1/freerdp-shadow-cli.1*
+%{INSTALL_PREFIX}/share/man/man1/winpr-makecert.1*
+%{INSTALL_PREFIX}/share/man/man1/winpr-hash.1*
+%{INSTALL_PREFIX}/share/man/man7/wlog.7*
 
 %files devel
 %defattr(-,root,root)
@@ -154,7 +181,7 @@ export NO_BRP_CHECK_RPATH true
 
 
 %changelog
-* Tue Nov 16 2015 FreeRDP Team <team@freerdp.com> - 2.0.0-0
+* Wed Feb 7 2018 FreeRDP Team <team@freerdp.com> - 2.0.0-0
 - Update version information and support for OpenSuse 42.1
 * Tue Feb 03 2015 FreeRDP Team <team@freerdp.com> - 1.2.1-0
 - Update version information

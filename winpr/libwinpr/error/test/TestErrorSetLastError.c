@@ -31,7 +31,7 @@ static int status = 0;
 LONG *pLoopCount = NULL;
 BOOL bStopTest = FALSE;
 
-static void* test_error_thread(void* arg)
+static DWORD WINAPI test_error_thread(LPVOID arg)
 {
 	int id;
 	DWORD dwErrorSet;
@@ -44,7 +44,7 @@ static void* test_error_thread(void* arg)
 		SetLastError(dwErrorSet);
 		if ((dwErrorGet = GetLastError()) != dwErrorSet)
 		{
-			printf("GetLastError() failure (thread %d): Expected: 0x%04X, Actual: 0x%04X\n",
+			printf("GetLastError() failure (thread %d): Expected: 0x%08"PRIX32", Actual: 0x%08"PRIX32"\n",
 				id, dwErrorSet, dwErrorGet);
 			if (!status)
 				status = -1;
@@ -53,7 +53,7 @@ static void* test_error_thread(void* arg)
 		InterlockedIncrement(pLoopCount);
 	} while (!status && !bStopTest);
 
-	return NULL;
+	return 0;
 }
 
 int TestErrorSetLastError(int argc, char* argv[])
@@ -73,7 +73,7 @@ int TestErrorSetLastError(int argc, char* argv[])
 
 	if (error != ERROR_ACCESS_DENIED)
 	{
-		printf("GetLastError() failure: Expected: 0x%04X, Actual: 0x%04X\n",
+		printf("GetLastError() failure: Expected: 0x%08X, Actual: 0x%08"PRIX32"\n",
 				ERROR_ACCESS_DENIED, error);
 		return -1;
 	}
@@ -88,7 +88,7 @@ int TestErrorSetLastError(int argc, char* argv[])
 
 	for (i = 0; i < 4; i++)
 	{
-		if (!(threads[i] = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) test_error_thread, (void*) (size_t) 0, 0, NULL)))
+		if (!(threads[i] = CreateThread(NULL, 0, test_error_thread, (void*) (size_t) 0, 0, NULL)))
 		{
 			printf("Failed to create thread #%d\n", i);
 			return -1;
@@ -113,7 +113,7 @@ int TestErrorSetLastError(int argc, char* argv[])
 
 	if (error != ERROR_ACCESS_DENIED)
 	{
-		printf("GetLastError() failure: Expected: 0x%04X, Actual: 0x%04X\n",
+		printf("GetLastError() failure: Expected: 0x%08X, Actual: 0x%08"PRIX32"\n",
 				ERROR_ACCESS_DENIED, error);
 		return -1;
 	}
@@ -124,7 +124,7 @@ int TestErrorSetLastError(int argc, char* argv[])
 		return -1;
 	}
 
-	printf("Completed %d iterations.\n", *pLoopCount);
+	printf("Completed %"PRId32" iterations.\n", *pLoopCount);
 
 	return status;
 }

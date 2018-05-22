@@ -27,6 +27,7 @@
 #include <winpr/tchar.h>
 #include <winpr/synch.h>
 #include <winpr/dsparse.h>
+#include <winpr/crypto.h>
 
 #include <freerdp/log.h>
 
@@ -36,6 +37,7 @@
 #include <valgrind/memcheck.h>
 #endif
 
+#include "../proxy.h"
 #include "http.h"
 #include "ntlm.h"
 #include "ncacn_http.h"
@@ -49,10 +51,10 @@
 
 /* Security Verification Trailer Signature */
 
-rpc_sec_verification_trailer RPC_SEC_VERIFICATION_TRAILER =
+static const rpc_sec_verification_trailer RPC_SEC_VERIFICATION_TRAILER =
 { { 0x8a, 0xe3, 0x13, 0x71, 0x02, 0xf4, 0x36, 0x71 } };
 
-static char* PTYPE_STRINGS[] =
+static const char* PTYPE_STRINGS[] =
 {
 	"PTYPE_REQUEST",
 	"PTYPE_PING",
@@ -78,7 +80,7 @@ static char* PTYPE_STRINGS[] =
 	""
 };
 
-const RPC_SECURITY_PROVIDER_INFO RPC_SECURITY_PROVIDER_INFO_TABLE[] =
+static const RPC_SECURITY_PROVIDER_INFO RPC_SECURITY_PROVIDER_INFO_TABLE[] =
 {
 	{ RPC_C_AUTHN_NONE, TRUE, -1 },
 	{ RPC_C_AUTHN_GSS_NEGOTIATE, TRUE, -1 },
@@ -118,15 +120,15 @@ const RPC_SECURITY_PROVIDER_INFO RPC_SECURITY_PROVIDER_INFO_TABLE[] =
 
 void rpc_pdu_header_print(rpcconn_hdr_t* header)
 {
-	WLog_INFO(TAG,  "rpc_vers: %d", header->common.rpc_vers);
-	WLog_INFO(TAG,  "rpc_vers_minor: %d", header->common.rpc_vers_minor);
+	WLog_INFO(TAG,  "rpc_vers: %"PRIu8"", header->common.rpc_vers);
+	WLog_INFO(TAG,  "rpc_vers_minor: %"PRIu8"", header->common.rpc_vers_minor);
 
 	if (header->common.ptype > PTYPE_RTS)
-		WLog_INFO(TAG,  "ptype: %s (%d)", "PTYPE_UNKNOWN", header->common.ptype);
+		WLog_INFO(TAG,  "ptype: %s (%"PRIu8")", "PTYPE_UNKNOWN", header->common.ptype);
 	else
-		WLog_INFO(TAG,  "ptype: %s (%d)", PTYPE_STRINGS[header->common.ptype], header->common.ptype);
+		WLog_INFO(TAG,  "ptype: %s (%"PRIu8")", PTYPE_STRINGS[header->common.ptype], header->common.ptype);
 
-	WLog_INFO(TAG,  "pfc_flags (0x%02X) = {", header->common.pfc_flags);
+	WLog_INFO(TAG,  "pfc_flags (0x%02"PRIX8") = {", header->common.pfc_flags);
 
 	if (header->common.pfc_flags & PFC_FIRST_FRAG)
 		WLog_INFO(TAG,  " PFC_FIRST_FRAG");
@@ -150,19 +152,19 @@ void rpc_pdu_header_print(rpcconn_hdr_t* header)
 		WLog_INFO(TAG,  " PFC_OBJECT_UUID");
 
 	WLog_INFO(TAG,  " }");
-	WLog_INFO(TAG,  "packed_drep[4]: %02X %02X %02X %02X",
-			 header->common.packed_drep[0], header->common.packed_drep[1],
-			 header->common.packed_drep[2], header->common.packed_drep[3]);
-	WLog_INFO(TAG,  "frag_length: %d", header->common.frag_length);
-	WLog_INFO(TAG,  "auth_length: %d", header->common.auth_length);
-	WLog_INFO(TAG,  "call_id: %d", header->common.call_id);
+	WLog_INFO(TAG,  "packed_drep[4]: %02"PRIX8" %02"PRIX8" %02"PRIX8" %02"PRIX8"",
+	          header->common.packed_drep[0], header->common.packed_drep[1],
+	          header->common.packed_drep[2], header->common.packed_drep[3]);
+	WLog_INFO(TAG,  "frag_length: %"PRIu16"", header->common.frag_length);
+	WLog_INFO(TAG,  "auth_length: %"PRIu16"", header->common.auth_length);
+	WLog_INFO(TAG,  "call_id: %"PRIu32"", header->common.call_id);
 
 	if (header->common.ptype == PTYPE_RESPONSE)
 	{
-		WLog_INFO(TAG,  "alloc_hint: %d", header->response.alloc_hint);
-		WLog_INFO(TAG,  "p_cont_id: %d", header->response.p_cont_id);
-		WLog_INFO(TAG,  "cancel_count: %d", header->response.cancel_count);
-		WLog_INFO(TAG,  "reserved: %d", header->response.reserved);
+		WLog_INFO(TAG,  "alloc_hint: %"PRIu32"", header->response.alloc_hint);
+		WLog_INFO(TAG,  "p_cont_id: %"PRIu16"", header->response.p_cont_id);
+		WLog_INFO(TAG,  "cancel_count: %"PRIu8"", header->response.cancel_count);
+		WLog_INFO(TAG,  "reserved: %"PRIu8"", header->response.reserved);
 	}
 }
 
@@ -275,7 +277,6 @@ BOOL rpc_get_stub_data_info(rdpRpc* rpc, BYTE* buffer, UINT32* offset, UINT32* l
 	UINT32 auth_pad_length;
 	UINT32 sec_trailer_offset;
 	rpc_sec_trailer* sec_trailer;
-
 	*offset = RPC_COMMON_FIELDS_LENGTH;
 	header = ((rpcconn_hdr_t*) buffer);
 
@@ -298,7 +299,7 @@ BOOL rpc_get_stub_data_info(rdpRpc* rpc, BYTE* buffer, UINT32* offset, UINT32* l
 			break;
 
 		default:
-			WLog_ERR(TAG, "Unknown PTYPE: 0x%04X", header->common.ptype);
+			WLog_ERR(TAG, "Unknown PTYPE: 0x%02"PRIX8"", header->common.ptype);
 			return FALSE;
 	}
 
@@ -318,12 +319,12 @@ BOOL rpc_get_stub_data_info(rdpRpc* rpc, BYTE* buffer, UINT32* offset, UINT32* l
 	sec_trailer_offset = frag_length - auth_length - 8;
 	sec_trailer = (rpc_sec_trailer*) &buffer[sec_trailer_offset];
 	auth_pad_length = sec_trailer->auth_pad_length;
-
 #if 0
-	WLog_DBG(TAG, "sec_trailer: type: %d level: %d pad_length: %d reserved: %d context_id: %d",
-			sec_trailer->auth_type, sec_trailer->auth_level,
-			sec_trailer->auth_pad_length, sec_trailer->auth_reserved,
-			sec_trailer->auth_context_id);
+	WLog_DBG(TAG,
+	         "sec_trailer: type: %"PRIu8" level: %"PRIu8" pad_length: %"PRIu8" reserved: %"PRIu8" context_id: %"PRIu32"",
+	         sec_trailer->auth_type, sec_trailer->auth_level,
+	         sec_trailer->auth_pad_length, sec_trailer->auth_reserved,
+	         sec_trailer->auth_context_id);
 #endif
 
 	/**
@@ -334,8 +335,8 @@ BOOL rpc_get_stub_data_info(rdpRpc* rpc, BYTE* buffer, UINT32* offset, UINT32* l
 
 	if ((frag_length - (sec_trailer_offset + 8)) != auth_length)
 	{
-		WLog_ERR(TAG, "invalid auth_length: actual: %d, expected: %d", auth_length,
-				 (frag_length - (sec_trailer_offset + 8)));
+		WLog_ERR(TAG, "invalid auth_length: actual: %"PRIu32", expected: %"PRIu32"", auth_length,
+		         (frag_length - (sec_trailer_offset + 8)));
 	}
 
 	*length = frag_length - auth_length - 24 - 8 - auth_pad_length;
@@ -345,7 +346,6 @@ BOOL rpc_get_stub_data_info(rdpRpc* rpc, BYTE* buffer, UINT32* offset, UINT32* l
 int rpc_out_channel_read(RpcOutChannel* outChannel, BYTE* data, int length)
 {
 	int status;
-
 	status = BIO_read(outChannel->tls->bio, data, length);
 
 	if (status > 0)
@@ -365,18 +365,14 @@ int rpc_out_channel_read(RpcOutChannel* outChannel, BYTE* data, int length)
 int rpc_in_channel_write(RpcInChannel* inChannel, const BYTE* data, int length)
 {
 	int status;
-
 	status = tls_write_all(inChannel->tls, data, length);
-
 	return status;
 }
 
 int rpc_out_channel_write(RpcOutChannel* outChannel, const BYTE* data, int length)
 {
 	int status;
-
 	status = tls_write_all(outChannel->tls, data, length);
-
 	return status;
 }
 
@@ -418,14 +414,12 @@ int rpc_in_channel_transition_to_state(RpcInChannel* inChannel, CLIENT_IN_CHANNE
 
 	inChannel->State = state;
 	WLog_DBG(TAG, "%s", str);
-
 	return status;
 }
 
-int rpc_in_channel_rpch_init(rdpRpc* rpc, RpcInChannel* inChannel)
+static int rpc_in_channel_rpch_init(rdpRpc* rpc, RpcInChannel* inChannel)
 {
 	HttpContext* http;
-
 	inChannel->ntlm = ntlm_new();
 
 	if (!inChannel->ntlm)
@@ -437,25 +431,20 @@ int rpc_in_channel_rpch_init(rdpRpc* rpc, RpcInChannel* inChannel)
 		return -1;
 
 	http = inChannel->http;
-
 	http_context_set_method(http, "RPC_IN_DATA");
-
 	http_context_set_uri(http, "/rpc/rpcproxy.dll?localhost:3388");
 	http_context_set_accept(http, "application/rpc");
 	http_context_set_cache_control(http, "no-cache");
 	http_context_set_connection(http, "Keep-Alive");
 	http_context_set_user_agent(http, "MSRPC");
 	http_context_set_host(http, rpc->settings->GatewayHostname);
-
 	http_context_set_pragma(http, "ResourceTypeUuid=44e265dd-7daf-42cd-8560-3cdb6e7a2729");
-
 	return 1;
 }
 
-int rpc_in_channel_init(rdpRpc* rpc, RpcInChannel* inChannel)
+static int rpc_in_channel_init(rdpRpc* rpc, RpcInChannel* inChannel)
 {
 	rts_generate_cookie((BYTE*) &inChannel->Cookie);
-
 	inChannel->rpc = rpc;
 	inChannel->State = CLIENT_IN_CHANNEL_STATE_INITIAL;
 	inChannel->BytesSent = 0;
@@ -469,7 +458,7 @@ int rpc_in_channel_init(rdpRpc* rpc, RpcInChannel* inChannel)
 	return 1;
 }
 
-void rpc_in_channel_rpch_uninit(RpcInChannel* inChannel)
+static void rpc_in_channel_rpch_uninit(RpcInChannel* inChannel)
 {
 	if (inChannel->ntlm)
 	{
@@ -484,10 +473,9 @@ void rpc_in_channel_rpch_uninit(RpcInChannel* inChannel)
 	}
 }
 
-RpcInChannel* rpc_in_channel_new(rdpRpc* rpc)
+static RpcInChannel* rpc_in_channel_new(rdpRpc* rpc)
 {
 	RpcInChannel* inChannel = NULL;
-
 	inChannel = (RpcInChannel*) calloc(1, sizeof(RpcInChannel));
 
 	if (inChannel)
@@ -498,7 +486,7 @@ RpcInChannel* rpc_in_channel_new(rdpRpc* rpc)
 	return inChannel;
 }
 
-void rpc_in_channel_free(RpcInChannel* inChannel)
+static void rpc_in_channel_free(RpcInChannel* inChannel)
 {
 	if (!inChannel)
 		return;
@@ -564,14 +552,12 @@ int rpc_out_channel_transition_to_state(RpcOutChannel* outChannel, CLIENT_OUT_CH
 
 	outChannel->State = state;
 	WLog_DBG(TAG, "%s", str);
-
 	return status;
 }
 
-int rpc_out_channel_rpch_init(rdpRpc* rpc, RpcOutChannel* outChannel)
+static int rpc_out_channel_rpch_init(rdpRpc* rpc, RpcOutChannel* outChannel)
 {
 	HttpContext* http;
-
 	outChannel->ntlm = ntlm_new();
 
 	if (!outChannel->ntlm)
@@ -583,27 +569,22 @@ int rpc_out_channel_rpch_init(rdpRpc* rpc, RpcOutChannel* outChannel)
 		return -1;
 
 	http = outChannel->http;
-
 	http_context_set_method(http, "RPC_OUT_DATA");
-
 	http_context_set_uri(http, "/rpc/rpcproxy.dll?localhost:3388");
 	http_context_set_accept(http, "application/rpc");
 	http_context_set_cache_control(http, "no-cache");
 	http_context_set_connection(http, "Keep-Alive");
 	http_context_set_user_agent(http, "MSRPC");
 	http_context_set_host(http, rpc->settings->GatewayHostname);
-
 	http_context_set_pragma(http,
-			"ResourceTypeUuid=44e265dd-7daf-42cd-8560-3cdb6e7a2729, "
-			"SessionId=fbd9c34f-397d-471d-a109-1b08cc554624");
-
+	                        "ResourceTypeUuid=44e265dd-7daf-42cd-8560-3cdb6e7a2729, "
+	                        "SessionId=fbd9c34f-397d-471d-a109-1b08cc554624");
 	return 1;
 }
 
-int rpc_out_channel_init(rdpRpc* rpc, RpcOutChannel* outChannel)
+static int rpc_out_channel_init(rdpRpc* rpc, RpcOutChannel* outChannel)
 {
 	rts_generate_cookie((BYTE*) &outChannel->Cookie);
-
 	outChannel->rpc = rpc;
 	outChannel->State = CLIENT_OUT_CHANNEL_STATE_INITIAL;
 	outChannel->BytesReceived = 0;
@@ -618,7 +599,7 @@ int rpc_out_channel_init(rdpRpc* rpc, RpcOutChannel* outChannel)
 	return 1;
 }
 
-void rpc_out_channel_rpch_uninit(RpcOutChannel* outChannel)
+static void rpc_out_channel_rpch_uninit(RpcOutChannel* outChannel)
 {
 	if (outChannel->ntlm)
 	{
@@ -636,7 +617,6 @@ void rpc_out_channel_rpch_uninit(RpcOutChannel* outChannel)
 RpcOutChannel* rpc_out_channel_new(rdpRpc* rpc)
 {
 	RpcOutChannel* outChannel = NULL;
-
 	outChannel = (RpcOutChannel*) calloc(1, sizeof(RpcOutChannel));
 
 	if (outChannel)
@@ -664,7 +644,7 @@ void rpc_out_channel_free(RpcOutChannel* outChannel)
 }
 
 int rpc_virtual_connection_transition_to_state(rdpRpc* rpc,
-		RpcVirtualConnection* connection, VIRTUAL_CONNECTION_STATE state)
+        RpcVirtualConnection* connection, VIRTUAL_CONNECTION_STATE state)
 {
 	int status = 1;
 	const char* str = "VIRTUAL_CONNECTION_STATE_UNKNOWN";
@@ -698,24 +678,20 @@ int rpc_virtual_connection_transition_to_state(rdpRpc* rpc,
 
 	connection->State = state;
 	WLog_DBG(TAG, "%s", str);
-
 	return status;
 }
 
-RpcVirtualConnection* rpc_virtual_connection_new(rdpRpc* rpc)
+static RpcVirtualConnection* rpc_virtual_connection_new(rdpRpc* rpc)
 {
 	RpcVirtualConnection* connection;
-
 	connection = (RpcVirtualConnection*) calloc(1, sizeof(RpcVirtualConnection));
 
 	if (!connection)
 		return NULL;
 
-	rts_generate_cookie((BYTE*) &(connection->Cookie));
-	rts_generate_cookie((BYTE*) &(connection->AssociationGroupId));
-
+	rts_generate_cookie((BYTE*) & (connection->Cookie));
+	rts_generate_cookie((BYTE*) & (connection->AssociationGroupId));
 	connection->State = VIRTUAL_CONNECTION_STATE_INITIAL;
-
 	connection->DefaultInChannel = rpc_in_channel_new(rpc);
 
 	if (!connection->DefaultInChannel)
@@ -734,21 +710,19 @@ out_free:
 	return NULL;
 }
 
-void rpc_virtual_connection_free(RpcVirtualConnection* connection)
+static void rpc_virtual_connection_free(RpcVirtualConnection* connection)
 {
 	if (!connection)
 		return;
 
 	rpc_in_channel_free(connection->DefaultInChannel);
 	rpc_in_channel_free(connection->NonDefaultInChannel);
-
 	rpc_out_channel_free(connection->DefaultOutChannel);
 	rpc_out_channel_free(connection->NonDefaultOutChannel);
-
 	free(connection);
 }
 
-int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
+static int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 {
 	int sockfd;
 	rdpTls* tls;
@@ -758,9 +732,11 @@ int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 	rdpRpc* rpc = channel->rpc;
 	rdpContext* context = rpc->context;
 	rdpSettings* settings = context->settings;
-
-	sockfd = freerdp_tcp_connect(context, settings, settings->GatewayHostname,
-					settings->GatewayPort, timeout);
+	const char* peerHostname = settings->GatewayHostname;
+	UINT16 peerPort = settings->GatewayPort;
+	BOOL isProxyConnection = proxy_prepare(settings, &peerHostname, &peerPort, TRUE);
+	sockfd = freerdp_tcp_connect(context, settings, peerHostname,
+	                             peerPort, timeout);
 
 	if (sockfd < 1)
 		return -1;
@@ -771,7 +747,6 @@ int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 		return FALSE;
 
 	BIO_set_fd(socketBio, sockfd, BIO_CLOSE);
-
 	bufferedBio = BIO_new(BIO_s_buffered_socket());
 
 	if (!bufferedBio)
@@ -782,8 +757,13 @@ int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 	if (!BIO_set_nonblock(bufferedBio, TRUE))
 		return -1;
 
-	channel->bio = bufferedBio;
+	if (isProxyConnection)
+	{
+		if (!proxy_connect(settings, bufferedBio, settings->GatewayHostname, settings->GatewayPort))
+			return -1;
+	}
 
+	channel->bio = bufferedBio;
 	tls = channel->tls = tls_new(settings);
 
 	if (!tls)
@@ -792,7 +772,6 @@ int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 	tls->hostname = settings->GatewayHostname;
 	tls->port = settings->GatewayPort;
 	tls->isGatewayTransport = TRUE;
-
 	tlsStatus = tls_connect(tls, bufferedBio);
 
 	if (tlsStatus < 1)
@@ -814,7 +793,7 @@ int rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 	return 1;
 }
 
-int rpc_in_channel_connect(RpcInChannel* inChannel, int timeout)
+static int rpc_in_channel_connect(RpcInChannel* inChannel, int timeout)
 {
 	rdpRpc* rpc = inChannel->rpc;
 
@@ -837,11 +816,10 @@ int rpc_in_channel_connect(RpcInChannel* inChannel, int timeout)
 	}
 
 	rpc_in_channel_transition_to_state(inChannel, CLIENT_IN_CHANNEL_STATE_SECURITY);
-
 	return 1;
 }
 
-int rpc_out_channel_connect(RpcOutChannel* outChannel, int timeout)
+static int rpc_out_channel_connect(RpcOutChannel* outChannel, int timeout)
 {
 	rdpRpc* rpc = outChannel->rpc;
 
@@ -864,7 +842,6 @@ int rpc_out_channel_connect(RpcOutChannel* outChannel, int timeout)
 	}
 
 	rpc_out_channel_transition_to_state(outChannel, CLIENT_OUT_CHANNEL_STATE_SECURITY);
-
 	return 1;
 }
 
@@ -891,7 +868,6 @@ int rpc_out_channel_replacement_connect(RpcOutChannel* outChannel, int timeout)
 	}
 
 	rpc_out_channel_transition_to_state(outChannel, CLIENT_OUT_CHANNEL_STATE_SECURITY);
-
 	return 1;
 }
 
@@ -900,7 +876,6 @@ BOOL rpc_connect(rdpRpc* rpc, int timeout)
 	RpcInChannel* inChannel;
 	RpcOutChannel* outChannel;
 	RpcVirtualConnection* connection;
-
 	rpc->VirtualConnection = rpc_virtual_connection_new(rpc);
 
 	if (!rpc->VirtualConnection)
@@ -909,7 +884,6 @@ BOOL rpc_connect(rdpRpc* rpc, int timeout)
 	connection = rpc->VirtualConnection;
 	inChannel = connection->DefaultInChannel;
 	outChannel = connection->DefaultOutChannel;
-
 	rpc_virtual_connection_transition_to_state(rpc, connection, VIRTUAL_CONNECTION_STATE_INITIAL);
 
 	if (rpc_in_channel_connect(inChannel, timeout) < 0)
@@ -929,13 +903,10 @@ rdpRpc* rpc_new(rdpTransport* transport)
 		return NULL;
 
 	rpc->State = RPC_CLIENT_STATE_INITIAL;
-
 	rpc->transport = transport;
 	rpc->settings = transport->settings;
 	rpc->context = transport->context;
-
 	rpc->SendSeqNum = 0;
-
 	rpc->ntlm = ntlm_new();
 
 	if (!rpc->ntlm)
@@ -946,7 +917,6 @@ rdpRpc* rpc_new(rdpTransport* transport)
 	rpc->StubFragCount = 0;
 	rpc->rpc_vers = 5;
 	rpc->rpc_vers_minor = 0;
-
 	/* little-endian data representation */
 	rpc->packed_drep[0] = 0x10;
 	rpc->packed_drep[1] = 0x00;
@@ -954,13 +924,11 @@ rdpRpc* rpc_new(rdpTransport* transport)
 	rpc->packed_drep[3] = 0x00;
 	rpc->max_xmit_frag = 0x0FF8;
 	rpc->max_recv_frag = 0x0FF8;
-
 	rpc->ReceiveWindow = 0x00010000;
 	rpc->ChannelLifetime = 0x40000000;
 	rpc->KeepAliveInterval = 300000;
 	rpc->CurrentKeepAliveInterval = rpc->KeepAliveInterval;
 	rpc->CurrentKeepAliveTime = 0;
-
 	rpc->CallId = 2;
 
 	if (rpc_client_new(rpc) < 0)

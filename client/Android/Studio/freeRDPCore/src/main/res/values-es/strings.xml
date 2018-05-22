@@ -28,7 +28,7 @@
     <string name="section_bookmarks">Conexión Manual</string>
     <string name="section_active_sessions">Sesiones Activas</string>
     <!-- Search strings -->
-    <string name="search_hint">Connect to Computer</string>    
+    <string name="search_hint">Connect to Computer</string>
     <!-- List placeholder labels -->
     <string name="list_placeholder_login">Login</string>
     <string name="list_placeholder_no_servers">No hay escritorios virtuales</string>
@@ -53,6 +53,8 @@
     <string name="settings_cat_screen">Configuracion Pantalla</string>
     <string name="settings_colors">Colores</string>
     <string-array name="colors_array">
+        <item>Gama de colores (8 Bit)</item>
+        <item>Calidad Normal (15 Bit)</item>
         <item>Calidad Normal (16 Bit)</item>
         <item>Calidad Optima (24 Bit)</item>
         <item>Calidad maxima (32 Bit)</item>
@@ -93,7 +95,7 @@
     <string name="settings_performance_3g">Rendimiento 3G</string>
     <string name="settings_cat_gateway">Gateway</string>
     <string name="settings_enable_gateway_settings">Enable Gateway</string>
-    <string name="settings_gateway_settings">Gateway Settings</string>    
+    <string name="settings_gateway_settings">Gateway Settings</string>
     <string name="settings_redirect_sdcard">Redirect SDCard</string>
     <string name="settings_redirect_sound">Redirect Sound</string>
     <string-array name="redirect_sound_array">
@@ -121,6 +123,7 @@
     <string name="settings_password_empty">no configurado</string>
     <string name="settings_cat_ui">Interfaze Usuario</string>
     <string name="settings_ui_hide_status_bar">Ocultar barra de estado</string>
+    <string name="settings_ui_hide_action_bar">\"Ocultar barra de acción\"</string>
     <string name="settings_ui_hide_zoom_controls">Ocultar controles de zoom</string>
     <string name="settings_ui_swap_mouse_buttons">Intercambiar botones del mouse</string>
     <string name="settings_ui_invert_scrolling">invertir desplazamiento</string>
@@ -168,4 +171,7 @@
     <string name="dlg_msg_clear_cert_cache">Esta seguro que desea borrar todos los certificados?</string>
     <string name="debug_level">Debug Level</string>
     <string name="settings_debug">Debug Settings</string>
+    <string name="preference_title_client">Cliente</string>
+    <string name="settings_cat_client">Cliente</string>
+    <string name="preference_title_client_name">Identificador del cliente</string>
 </resources>

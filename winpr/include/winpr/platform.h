@@ -22,7 +22,6 @@
 
 #include <stdlib.h>
 
-#include <winpr/winpr.h>
 #include <winpr/wtypes.h>
 
 /*
@@ -84,6 +83,15 @@
 	defined(__mips__) || defined(__MIPS__)
 #ifndef _M_MIPS
 #define	 _M_MIPS	1
+#endif
+#endif
+
+/* MIPS64 (_M_MIPS64) */
+
+#if defined(mips64) || defined(__mips64) || \
+	defined(__mips64__) || defined(__MIPS64__)
+#ifndef _M_MIPS64
+#define	 _M_MIPS64	1
 #endif
 #endif
 

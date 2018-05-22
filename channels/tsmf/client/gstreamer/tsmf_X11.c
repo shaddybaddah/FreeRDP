@@ -21,7 +21,9 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#ifndef __CYGWIN__
 #include <sys/syscall.h>
+#endif
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -31,7 +33,15 @@
 #include <winpr/thread.h>
 #include <winpr/string.h>
 
+#if __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wparentheses-equality"
+#endif /* __clang__ */
 #include <gst/gst.h>
+#if __clang__
+#pragma clang diagnostic pop
+#endif /* __clang__ */
+
 #if GST_VERSION_MAJOR > 0
 #include <gst/video/videooverlay.h>
 #else
@@ -107,7 +117,11 @@ static GstBusSyncReply tsmf_platform_bus_sync_handler(GstBus *bus, GstMessage *m
 		gst_video_overlay_handle_events(hdl->overlay, TRUE);
 #else
 		hdl->overlay = GST_X_OVERLAY (GST_MESSAGE_SRC (message));
+#if GST_CHECK_VERSION(0,10,31) 
 		gst_x_overlay_set_window_handle(hdl->overlay, hdl->subwin);
+#else
+		gst_x_overlay_set_xwindow_id(hdl->overlay, hdl->subwin);
+#endif
 		gst_x_overlay_handle_events(hdl->overlay, TRUE);
 #endif
 
@@ -314,13 +328,13 @@ int tsmf_window_resize(TSMFGstreamerDecoder* decoder, int x, int y, int width,
 {
 	struct X11Handle* hdl;
 
+	if (!decoder)
+		return -1;
+
 	if (decoder->media_type != TSMF_MAJOR_TYPE_VIDEO)
 	{
 		return -3;
 	}
-
-	if (!decoder)
-		return -1;
 
 	if (!decoder->platform)
 		return -1;
@@ -467,13 +481,14 @@ int tsmf_window_unmap(TSMFGstreamerDecoder* decoder)
 int tsmf_window_destroy(TSMFGstreamerDecoder* decoder)
 {
 	struct X11Handle* hdl;
+
+	if (!decoder)
+		return -1;
+
 	decoder->ready = FALSE;
 
 	if (decoder->media_type != TSMF_MAJOR_TYPE_VIDEO)
 		return -3;
-
-	if (!decoder)
-		return -1;
 
 	if (!decoder->platform)
 		return -1;

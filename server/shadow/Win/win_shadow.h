@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_SHADOW_SERVER_WIN_H
-#define FREERDP_SHADOW_SERVER_WIN_H
+#ifndef FREERDP_SERVER_SHADOW_WIN_H
+#define FREERDP_SERVER_SHADOW_WIN_H
 
 #include <freerdp/assistance.h>
 
@@ -37,7 +37,7 @@ typedef struct win_shadow_subsystem winShadowSubsystem;
 
 struct win_shadow_subsystem
 {
-	RDP_SHADOW_SUBSYSTEM_COMMON();
+	rdpShadowSubsystem base;
 
 	int bpp;
 	int width;
@@ -87,4 +87,4 @@ extern "C" {
 }
 #endif
 
-#endif /* FREERDP_SHADOW_SERVER_WIN_H */
+#endif /* FREERDP_SERVER_SHADOW_WIN_H */

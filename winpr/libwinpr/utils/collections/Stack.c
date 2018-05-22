@@ -176,7 +176,7 @@ void* Stack_Peek(wStack* stack)
 		EnterCriticalSection(&stack->lock);
 
 	if (stack->size > 0)
-		obj = stack->array[stack->size];
+		obj = stack->array[stack->size - 1];
 
 	if (stack->synchronized)
 		LeaveCriticalSection(&stack->lock);
@@ -206,7 +206,7 @@ wStack* Stack_New(BOOL synchronized)
 	stack->synchronized = synchronized;
 
 	stack->capacity = 32;
-	stack->array = (void**) malloc(sizeof(void*) * stack->capacity);
+	stack->array = (void**) calloc(stack->capacity, sizeof(void*));
 	if (!stack->array)
 		goto out_free;
 

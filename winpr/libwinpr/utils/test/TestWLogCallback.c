@@ -1,4 +1,3 @@
-
 #include <winpr/crt.h>
 #include <winpr/tchar.h>
 #include <winpr/path.h>
@@ -6,7 +5,7 @@
 
 typedef struct 
 {
-	int level;
+	UINT32 level;
 	char *msg;
 	char *channel;
 } test_t;
@@ -93,7 +92,6 @@ int TestWLogCallback(int argc, char* argv[])
 	wLogCallbacks callbacks;
 
 	function = __FUNCTION__;
-	WLog_Init();
 
 	root = WLog_GetRoot();
 
@@ -130,8 +128,6 @@ int TestWLogCallback(int argc, char* argv[])
 	WLog_Print(logB, messages[7].level, messages[7].msg);
 
 	WLog_CloseAppender(root);
-
-	WLog_Uninit();
 
 	return success ? 0 : -1;
 }

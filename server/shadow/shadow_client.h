@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_SHADOW_SERVER_CLIENT_H
-#define FREERDP_SHADOW_SERVER_CLIENT_H
+#ifndef FREERDP_SERVER_SHADOW_CLIENT_H
+#define FREERDP_SERVER_SHADOW_CLIENT_H
 
 #include <freerdp/server/shadow.h>
 
@@ -25,11 +25,11 @@
 extern "C" {
 #endif
 
-int shadow_client_surface_update(rdpShadowClient* client, REGION16* region);
+BOOL shadow_client_surface_update(rdpShadowClient* client, REGION16* region);
 BOOL shadow_client_accepted(freerdp_listener* instance, freerdp_peer* client);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* FREERDP_SHADOW_SERVER_CLIENT_H */
+#endif /* FREERDP_SERVER_SHADOW_CLIENT_H */

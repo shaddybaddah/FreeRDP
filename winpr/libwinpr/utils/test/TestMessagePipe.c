@@ -3,18 +3,16 @@
 #include <winpr/thread.h>
 #include <winpr/collections.h>
 
-static void* message_echo_pipe_client_thread(void* arg)
+static DWORD WINAPI message_echo_pipe_client_thread(LPVOID arg)
 {
-	int index;
-	int count;
-	wMessage message;
-	wMessagePipe* pipe;
-
-	count = index = 0;
-	pipe = (wMessagePipe*) arg;
+	int index = 0;
+	wMessagePipe* pipe = (wMessagePipe*) arg;
 
 	while (index < 100)
 	{
+		wMessage message;
+		int count;
+
 		if (!MessageQueue_Post(pipe->In, NULL, 0, (void*) (size_t) index, NULL))
 			break;
 
@@ -37,12 +35,11 @@ static void* message_echo_pipe_client_thread(void* arg)
 
 	MessageQueue_PostQuit(pipe->In, 0);
 
-	return NULL;
+	return 0;
 }
 
-static void* message_echo_pipe_server_thread(void* arg)
+static DWORD WINAPI message_echo_pipe_server_thread(LPVOID arg)
 {
-	int count;
 	wMessage message;
 	wMessagePipe* pipe;
 
@@ -55,14 +52,12 @@ static void* message_echo_pipe_server_thread(void* arg)
 			if (message.id == WMQ_QUIT)
 				break;
 
-			count = (int) (size_t) message.wParam;
-
 			if (!MessageQueue_Dispatch(pipe->Out, &message))
 				break;
 		}
 	}
 
-	return NULL;
+	return 0;
 }
 
 int TestMessagePipe(int argc, char* argv[])
@@ -78,13 +73,13 @@ int TestMessagePipe(int argc, char* argv[])
 		goto out;
 	}
 
-	if (!(ClientThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) message_echo_pipe_client_thread, (void*) EchoPipe, 0, NULL)))
+	if (!(ClientThread = CreateThread(NULL, 0, message_echo_pipe_client_thread, (void*) EchoPipe, 0, NULL)))
 	{
 		printf("failed to create client thread\n");
 		goto out;
 	}
 
-	if (!(ServerThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) message_echo_pipe_server_thread, (void*) EchoPipe, 0, NULL)))
+	if (!(ServerThread = CreateThread(NULL, 0, message_echo_pipe_server_thread, (void*) EchoPipe, 0, NULL)))
 	{
 		printf("failed to create server thread\n");
 		goto out;

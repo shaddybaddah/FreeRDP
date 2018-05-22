@@ -17,16 +17,20 @@
  * limitations under the License.
  */
 
-#ifndef __ANDROID_CLIPRDR_H__
-#define __ANDROID_CLIPRDR_H__
+#ifndef FREERDP_CLIENT_ANDROID_CLIPRDR_H
+#define FREERDP_CLIENT_ANDROID_CLIPRDR_H
 
 #include <freerdp/client/cliprdr.h>
+#include <freerdp/api.h>
 
 #include "android_freerdp.h"
 
-int android_cliprdr_send_client_format_list(CliprdrClientContext* cliprdr);
+FREERDP_LOCAL UINT android_cliprdr_send_client_format_list(
+    CliprdrClientContext* cliprdr);
 
-int android_cliprdr_init(androidContext* afc, CliprdrClientContext* cliprdr);
-int android_cliprdr_uninit(androidContext* afc, CliprdrClientContext* cliprdr);
+FREERDP_LOCAL BOOL android_cliprdr_init(androidContext* afc,
+                                        CliprdrClientContext* cliprdr);
+FREERDP_LOCAL BOOL android_cliprdr_uninit(androidContext* afc,
+        CliprdrClientContext* cliprdr);
 
-#endif /* __ANDROID_CLIPRDR_H__ */
+#endif /* FREERDP_CLIENT_ANDROID_CLIPRDR_H */

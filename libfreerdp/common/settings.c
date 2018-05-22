@@ -307,17 +307,8 @@ out_print_name_error:
 				goto out_smartc_name_error;
 		}
 
-		if (smartcard->Path)
-		{
-			_smartcard->Path = _strdup(smartcard->Path);
-			if (!_smartcard->Path)
-				goto out_smartc_path_error;
-		}
-
 		return (RDPDR_DEVICE*) _smartcard;
 
-out_smartc_path_error:
-		free(_smartcard->Name);
 out_smartc_name_error:
 		free(_smartcard);
 		return NULL;
@@ -400,7 +391,7 @@ out_parallel_name_error:
 
 	}
 
-	WLog_ERR(TAG, "unknown device type %d", device->Type);
+	WLog_ERR(TAG, "unknown device type %"PRIu32"", device->Type);
 	return NULL;
 }
 
@@ -428,7 +419,7 @@ void freerdp_device_collection_free(rdpSettings* settings)
 		}
 		else if (settings->DeviceArray[index]->Type == RDPDR_DTYP_SMARTCARD)
 		{
-			free(((RDPDR_SMARTCARD*) device)->Path);
+
 		}
 		else if (settings->DeviceArray[index]->Type == RDPDR_DTYP_SERIAL)
 		{
@@ -592,7 +583,7 @@ ADDIN_ARGV* freerdp_dynamic_channel_clone(ADDIN_ARGV* channel)
 		return NULL;
 
 	_channel->argc = channel->argc;
-	_channel->argv = (char**) malloc(sizeof(char*) * channel->argc);
+	_channel->argv = (char**) calloc(sizeof(char*), channel->argc);
 
 	if (!_channel->argv)
 		goto out_free;
@@ -920,6 +911,9 @@ BOOL freerdp_get_param_bool(rdpSettings* settings, int id)
 
 		case FreeRDP_ExternalCertificateManagement:
 			return settings->ExternalCertificateManagement;
+
+		case FreeRDP_FIPSMode:
+			return settings->FIPSMode;
 
 		case FreeRDP_Workarea:
 			return settings->Workarea;
@@ -1381,6 +1375,10 @@ int freerdp_set_param_bool(rdpSettings* settings, int id, BOOL param)
 			settings->ExternalCertificateManagement = param;
 			break;
 
+		case FreeRDP_FIPSMode:
+			settings->FIPSMode = param;
+			break;
+
 		case FreeRDP_Workarea:
 			settings->Workarea = param;
 			break;
@@ -1633,6 +1631,10 @@ int freerdp_set_param_bool(rdpSettings* settings, int id, BOOL param)
 			settings->GfxAVC444 = param;
 			break;
 
+		case FreeRDP_GfxSendQoeAck:
+			settings->GfxSendQoeAck = param;
+			break;
+
 		case FreeRDP_DrawNineGridEnabled:
 			settings->DrawNineGridEnabled = param;
 			break;
@@ -1678,7 +1680,7 @@ int freerdp_set_param_bool(rdpSettings* settings, int id, BOOL param)
 			break;
 
 		default:
-			WLog_ERR(TAG,  "freerdp_set_param_bool: unknown id %d (param = %d)", id, param);
+			WLog_ERR(TAG,  "freerdp_set_param_bool: unknown id %d (param = %"PRId32")", id, param);
 			return -1;
 	}
 
@@ -1841,6 +1843,12 @@ UINT32 freerdp_get_param_uint32(rdpSettings* settings, int id)
 		case FreeRDP_PercentScreen:
 			return settings->PercentScreen;
 
+		case FreeRDP_PercentScreenUseWidth:
+			return settings->PercentScreenUseWidth;
+
+		case FreeRDP_PercentScreenUseHeight:
+			return settings->PercentScreenUseHeight;
+
 		case FreeRDP_GatewayUsageMethod:
 			return settings->GatewayUsageMethod;
 
@@ -1849,6 +1857,12 @@ UINT32 freerdp_get_param_uint32(rdpSettings* settings, int id)
 
 		case FreeRDP_GatewayCredentialsSource:
 			return settings->GatewayCredentialsSource;
+
+		case FreeRDP_ProxyType:
+			return settings->ProxyType;
+
+		case FreeRDP_ProxyPort:
+			return settings->ProxyPort;
 
 		case FreeRDP_RemoteAppNumIconCaches:
 			return settings->RemoteAppNumIconCaches;
@@ -2132,6 +2146,14 @@ int freerdp_set_param_uint32(rdpSettings* settings, int id, UINT32 param)
 			settings->PercentScreen = param;
 			break;
 
+		case FreeRDP_PercentScreenUseWidth:
+			settings->PercentScreenUseWidth = param;
+			break;
+
+		case FreeRDP_PercentScreenUseHeight:
+			settings->PercentScreenUseHeight = param;
+			break;
+
 		case FreeRDP_GatewayUsageMethod:
 			settings->GatewayUsageMethod = param;
 			break;
@@ -2142,6 +2164,14 @@ int freerdp_set_param_uint32(rdpSettings* settings, int id, UINT32 param)
 
 		case FreeRDP_GatewayCredentialsSource:
 			settings->GatewayCredentialsSource = param;
+			break;
+
+		case FreeRDP_ProxyType:
+			settings->ProxyType = param;
+			break;
+
+		case FreeRDP_ProxyPort:
+			settings->ProxyPort = param;
 			break;
 
 		case FreeRDP_RemoteAppNumIconCaches:
@@ -2301,7 +2331,7 @@ int freerdp_set_param_uint32(rdpSettings* settings, int id, UINT32 param)
 			break;
 
 		default:
-			WLog_ERR(TAG, "freerdp_set_param_uint32: unknown id %d (param = %u)", id, param);
+			WLog_ERR(TAG, "freerdp_set_param_uint32: unknown id %d (param = %"PRIu32")", id, param);
 			return -1;
 	}
 
@@ -2333,7 +2363,7 @@ int freerdp_set_param_uint64(rdpSettings* settings, int id, UINT64 param)
 			break;
 
 		default:
-			WLog_ERR(TAG,  "freerdp_set_param_uint64: unknown id %d (param = %u)", id, (UINT32) param);
+			WLog_ERR(TAG,  "freerdp_set_param_uint64: unknown id %d (param = %"PRIu64")", id, param);
 			return -1;
 	}
 
@@ -2397,6 +2427,12 @@ char* freerdp_get_param_string(rdpSettings* settings, int id)
 
 		case FreeRDP_AuthenticationServiceClass:
 			return settings->AuthenticationServiceClass;
+
+		case FreeRDP_AllowedTlsCiphers:
+			return settings->AllowedTlsCiphers;
+
+		case FreeRDP_NtlmSamFile:
+			return settings->NtlmSamFile;
 
 		case FreeRDP_PreconnectionBlob:
 			return settings->PreconnectionBlob;
@@ -2466,6 +2502,12 @@ char* freerdp_get_param_string(rdpSettings* settings, int id)
 
 		case FreeRDP_GatewayDomain:
 			return settings->GatewayDomain;
+
+		case FreeRDP_GatewayAccessToken:
+			return settings->GatewayAccessToken;
+
+		case FreeRDP_ProxyHostname:
+			return settings->ProxyHostname;
 
 		case FreeRDP_RemoteApplicationName:
 			return settings->RemoteApplicationName;
@@ -2574,6 +2616,14 @@ int freerdp_set_param_string(rdpSettings* settings, int id, const char* param)
 			tmp = &settings->AuthenticationServiceClass;
 			break;
 
+		case FreeRDP_AllowedTlsCiphers:
+			tmp = &settings->AllowedTlsCiphers;
+			break;
+
+		case FreeRDP_NtlmSamFile:
+			tmp = &settings->NtlmSamFile;
+			break;
+
 		case FreeRDP_PreconnectionBlob:
 			tmp = &settings->PreconnectionBlob;
 			break;
@@ -2664,6 +2714,14 @@ int freerdp_set_param_string(rdpSettings* settings, int id, const char* param)
 
 		case FreeRDP_GatewayDomain:
 			tmp = &settings->GatewayDomain;
+			break;
+
+		case FreeRDP_GatewayAccessToken:
+			tmp = &settings->GatewayAccessToken;
+			break;
+
+		case FreeRDP_ProxyHostname:
+			tmp = &settings->ProxyHostname;
 			break;
 
 		case FreeRDP_RemoteApplicationName:

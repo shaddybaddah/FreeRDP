@@ -98,11 +98,12 @@ static int crypto_rsa_common(const BYTE* input, int length, UINT32 key_length, c
 	BYTE* input_reverse;
 	BYTE* modulus_reverse;
 	BYTE* exponent_reverse;
-	BIGNUM mod, exp, x, y;
+	BIGNUM *mod, *exp, *x, *y;
 
 	input_reverse = (BYTE*) malloc(2 * key_length + exponent_size);
 	if (!input_reverse)
 		return -1;
+
 	modulus_reverse = input_reverse + key_length;
 	exponent_reverse = modulus_reverse + key_length;
 
@@ -113,32 +114,42 @@ static int crypto_rsa_common(const BYTE* input, int length, UINT32 key_length, c
 	memcpy(input_reverse, input, length);
 	crypto_reverse(input_reverse, length);
 
-	ctx = BN_CTX_new();
-	if (!ctx)
-		goto out_free_input_reverse;
-	BN_init(&mod);
-	BN_init(&exp);
-	BN_init(&x);
-	BN_init(&y);
+	if (!(ctx = BN_CTX_new()))
+		goto fail_bn_ctx;
 
-	BN_bin2bn(modulus_reverse, key_length, &mod);
-	BN_bin2bn(exponent_reverse, exponent_size, &exp);
-	BN_bin2bn(input_reverse, length, &x);
-	BN_mod_exp(&y, &x, &exp, &mod, ctx);
+	if (!(mod = BN_new()))
+		goto fail_bn_mod;
 
-	output_length = BN_bn2bin(&y, output);
+	if (!(exp = BN_new()))
+		goto fail_bn_exp;
+
+	if (!(x = BN_new()))
+		goto fail_bn_x;
+
+	if (!(y = BN_new()))
+		goto fail_bn_y;
+
+	BN_bin2bn(modulus_reverse, key_length, mod);
+	BN_bin2bn(exponent_reverse, exponent_size, exp);
+	BN_bin2bn(input_reverse, length, x);
+	BN_mod_exp(y, x, exp, mod, ctx);
+
+	output_length = BN_bn2bin(y, output);
 	crypto_reverse(output, output_length);
 
 	if (output_length < (int) key_length)
 		memset(output + output_length, 0, key_length - output_length);
 
-	BN_free(&y);
-	BN_clear_free(&x);
-	BN_free(&exp);
-	BN_free(&mod);
+	BN_free(y);
+fail_bn_y:
+	BN_clear_free(x);
+fail_bn_x:
+	BN_free(exp);
+fail_bn_exp:
+	BN_free(mod);
+fail_bn_mod:
 	BN_CTX_free(ctx);
-
-out_free_input_reverse:
+fail_bn_ctx:
 	free(input_reverse);
 
 	return output_length;
@@ -202,17 +213,17 @@ char* crypto_cert_fingerprint(X509* xcert)
 
 	X509_digest(xcert, EVP_sha1(), fp, &fp_len);
 
-	fp_buffer = (char*) calloc(3, fp_len);
+	fp_buffer = (char*) calloc(fp_len, 3);
 	if (!fp_buffer)
 		return NULL;
 
 	p = fp_buffer;
 	for (i = 0; i < (int) (fp_len - 1); i++)
 	{
-		sprintf(p, "%02x:", fp[i]);
+		sprintf(p, "%02"PRIx8":", fp[i]);
 		p = &fp_buffer[(i + 1) * 3];
 	}
-	sprintf(p, "%02x", fp[i]);
+	sprintf(p, "%02"PRIx8"", fp[i]);
 
 	return fp_buffer;
 }
@@ -319,11 +330,11 @@ char** crypto_cert_subject_alt_name(X509* xcert, int* count, int** lengths)
 	num_subject_alt_names = sk_GENERAL_NAME_num(subject_alt_names);
 	if (num_subject_alt_names)
 	{
-		strings = (char**) malloc(sizeof(char*) * num_subject_alt_names);
+		strings = (char**) calloc(num_subject_alt_names, sizeof(char*));
 		if (!strings)
 			goto out;
 
-		*lengths = (int*) malloc(sizeof(int) * num_subject_alt_names);
+		*lengths = (int*) calloc(num_subject_alt_names, sizeof(int));
 		if (!*lengths)
 		{
 			free(strings);
@@ -377,7 +388,14 @@ BOOL x509_verify_certificate(CryptoCert cert, char* certificate_store_path)
 	if (cert_ctx == NULL)
 		goto end;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
 	OpenSSL_add_all_algorithms();
+#else
+	OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_CIPHERS \
+				| OPENSSL_INIT_ADD_ALL_DIGESTS \
+				| OPENSSL_INIT_LOAD_CONFIG, NULL);
+#endif
+
 	lookup = X509_STORE_add_lookup(cert_ctx, X509_LOOKUP_file());
 
 	if (lookup == NULL)
@@ -459,7 +477,7 @@ void crypto_cert_print_info(X509* xcert)
 	WLog_INFO(TAG,  "\tThumbprint: %s", fp);
 	WLog_INFO(TAG,  "The above X.509 certificate could not be verified, possibly because you do not have "
 			"the CA certificate in your certificate store, or the certificate has expired. "
-			"Please look at the documentation on how to create local certificate store for a private CA.");
+			"Please look at the OpenSSL documentation on how to add a private CA to the store.");
 	free(fp);
 out_free_issuer:
 	free(issuer);

@@ -375,12 +375,12 @@ static void touch_handle_down(void *data, struct wl_touch *wl_touch,
 
 	input->touch_focus = wl_surface_get_user_data(surface);
 	if (!input->touch_focus) {
-		DBG("Failed to find to touch focus for surface %p\n", surface);
+		DBG("Failed to find to touch focus for surface %p\n", (void*) surface);
 		return;
 	}
 
 	if (surface != input->touch_focus->main_surface->surface) {
-		DBG("Ignoring input event from subsurface %p\n", surface);
+		DBG("Ignoring input event from subsurface %p\n", (void*) surface);
 		input->touch_focus = NULL;
 		return;
 	}
@@ -602,10 +602,6 @@ static void pointer_handle_leave(void *data, struct wl_pointer *pointer, uint32_
 
 	event->seat = input;
 	event->window = window;
-
-#if 0
-	input_remove_pointer_focus(input);
-#endif
 }
 
 static void pointer_handle_motion(void *data, struct wl_pointer *pointer, uint32_t time,
@@ -677,12 +673,36 @@ static void pointer_handle_axis(void *data, struct wl_pointer *pointer, uint32_t
 	event->value = value;
 }
 
+static void pointer_frame(void *data, struct wl_pointer *wl_pointer)
+{
+	/*UwacSeat *seat = data;*/
+}
+
+static void pointer_axis_source(void *data, struct wl_pointer *wl_pointer, uint32_t axis_source)
+{
+	/*UwacSeat *seat = data;*/
+}
+
+static void pointer_axis_stop(void *data, struct wl_pointer *wl_pointer, uint32_t time, uint32_t axis)
+{
+	/*UwacSeat *seat = data;*/
+}
+
+static void pointer_axis_discrete(void *data, struct wl_pointer *wl_pointer, uint32_t axis, int32_t discrete)
+{
+	/*UwacSeat *seat = data;*/
+}
+
 static const struct wl_pointer_listener pointer_listener = {
 	pointer_handle_enter,
 	pointer_handle_leave,
 	pointer_handle_motion,
 	pointer_handle_button,
 	pointer_handle_axis,
+	pointer_frame,
+	pointer_axis_source,
+	pointer_axis_stop,
+	pointer_axis_discrete,
 };
 
 

@@ -63,11 +63,13 @@ struct winpr_comm
 
 	COMMTIMEOUTS timeouts;
 
-	CRITICAL_SECTION EventsLock; /* protects counters, WaitEventMask and PendingEvents */
+	CRITICAL_SECTION
+	EventsLock; /* protects counters, WaitEventMask and PendingEvents */
 	struct serial_icounter_struct counters;
 	ULONG WaitEventMask;
 	ULONG PendingEvents;
 
+	char eventChar;
 	/* NB: CloseHandle() has to free resources */
 };
 
@@ -93,7 +95,7 @@ typedef struct winpr_comm WINPR_COMM;
 #define FREERDP_PURGE_RXABORT		0x00000002 /* abort pending reception */
 
 
-void CommLog_Print(int wlog_level, char *fmt, ...);
+void CommLog_Print(int wlog_level, ...);
 
 BOOL CommIsHandled(HANDLE handle);
 BOOL CommCloseHandle(HANDLE handle);

@@ -18,19 +18,21 @@
  * limitations under the License.
  */
 
-#ifndef __TCP_H
-#define __TCP_H
+#ifndef FREERDP_LIB_CORE_TCP_H
+#define FREERDP_LIB_CORE_TCP_H
 
 #include <winpr/windows.h>
 
 #include <freerdp/types.h>
 #include <freerdp/settings.h>
 #include <freerdp/freerdp.h>
+#include <freerdp/api.h>
 
 #include <winpr/crt.h>
 #include <winpr/synch.h>
 #include <winpr/stream.h>
 #include <winpr/winsock.h>
+#include <winpr/crypto.h>
 
 #include <openssl/bio.h>
 
@@ -58,10 +60,11 @@
 #define BIO_wait_read(b, c)		BIO_ctrl(b, BIO_C_WAIT_READ, c, NULL)
 #define BIO_wait_write(b, c)		BIO_ctrl(b, BIO_C_WAIT_WRITE, c, NULL)
 
-BIO_METHOD* BIO_s_simple_socket(void);
-BIO_METHOD* BIO_s_buffered_socket(void);
+FREERDP_LOCAL BIO_METHOD* BIO_s_simple_socket(void);
+FREERDP_LOCAL BIO_METHOD* BIO_s_buffered_socket(void);
 
-int freerdp_tcp_connect(rdpContext* context, rdpSettings* settings,
-			const char* hostname, int port, int timeout);
+FREERDP_LOCAL int freerdp_tcp_connect(rdpContext* context,
+                                      rdpSettings* settings,
+                                      const char* hostname, int port, int timeout);
 
-#endif /* __TCP_H */
+#endif /* FREERDP_LIB_CORE_TCP_H */

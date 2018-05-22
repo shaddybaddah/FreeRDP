@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __TSMF_TYPES_H
-#define __TSMF_TYPES_H
+#ifndef FREERDP_CHANNEL_TSMF_CLIENT_TYPES_H
+#define FREERDP_CHANNEL_TSMF_CLIENT_TYPES_H
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -31,9 +31,9 @@
 #define TAG CHANNELS_TAG("tsmf.client")
 
 #ifdef WITH_DEBUG_TSMF
-#define DEBUG_TSMF(fmt, ...) WLog_DBG(TAG, fmt, ## __VA_ARGS__)
+#define DEBUG_TSMF(...) WLog_DBG(TAG, __VA_ARGS__)
 #else
-#define DEBUG_TSMF(fmt, ...) do { } while (0)
+#define DEBUG_TSMF(...) do { } while (0)
 #endif
 
 typedef struct _TS_AM_MEDIA_TYPE
@@ -53,9 +53,9 @@ typedef struct _TS_AM_MEDIA_TYPE
 	UINT32 Channels;
 	UINT32 BitsPerSample;
 	UINT32 BlockAlign;
-	const BYTE *ExtraData;
+	const BYTE* ExtraData;
 	UINT32 ExtraDataSize;
 } TS_AM_MEDIA_TYPE;
 
-#endif
+#endif /* FREERDP_CHANNEL_TSMF_CLIENT_TYPES_H */
 

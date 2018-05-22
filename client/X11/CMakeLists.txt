@@ -44,10 +44,14 @@ set(${MODULE_PREFIX}_SRCS
 	xf_cliprdr.h
 	xf_monitor.c
 	xf_monitor.h
+	xf_disp.c
+	xf_disp.h
 	xf_graphics.c
 	xf_graphics.h
 	xf_keyboard.c
 	xf_keyboard.h
+	xf_video.c
+	xf_video.h
 	xf_window.c
 	xf_window.h
 	xf_client.c
@@ -86,13 +90,19 @@ if(WITH_MANPAGES)
 
 		configure_file(xfreerdp.1.xml.in xfreerdp.1.xml @ONLY IMMEDIATE)
 
-		add_executable(generate_argument_docbook generate_argument_docbook.c)
-	
-		set(GAD_LIBS freerdp-client)
-		target_link_libraries(generate_argument_docbook ${GAD_LIBS} freerdp winpr)
+		# Compile the helper tool with default compiler settings.
+		# We need the include paths though.
+		get_property(dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+		set(GENERATE_INCLUDES "")
+		foreach(dir ${dirs})
+			set(GENERATE_INCLUDES ${GENERATE_INCLUDES} -I${dir})
+		endforeach(dir)
 
 		add_custom_command(OUTPUT xfreerdp.1
-					COMMAND generate_argument_docbook
+					COMMAND ${CMAKE_C_COMPILER} ${GENERATE_INCLUDES}
+						${CMAKE_CURRENT_SOURCE_DIR}/generate_argument_docbook.c
+						-o ${CMAKE_CURRENT_BINARY_DIR}/generate_argument_docbook
+					COMMAND ${CMAKE_CURRENT_BINARY_DIR}/generate_argument_docbook
 					COMMAND ${CMAKE_COMMAND} -E copy
 						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-channels.1.xml ${CMAKE_CURRENT_BINARY_DIR}
 					COMMAND ${CMAKE_COMMAND} -E copy
@@ -101,21 +111,16 @@ if(WITH_MANPAGES)
 						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-envvar.1.xml ${CMAKE_CURRENT_BINARY_DIR}
 					COMMAND ${XSLTPROC_EXECUTABLE} ${DOCBOOKXSL_DIR}/manpages/docbook.xsl xfreerdp.1.xml
 					WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-					DEPENDS 
-						${CMAKE_CURRENT_BINARY_DIR}/xfreerdp.1.xml 
-						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-examples.1.xml 
-						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-channels.1.xml 
-						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-envvar.1.xml
-						generate_argument_docbook)
+					DEPENDS
+						${CMAKE_CURRENT_BINARY_DIR}/xfreerdp.1.xml
+						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-examples.1.xml
+						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-channels.1.xml
+						${CMAKE_CURRENT_SOURCE_DIR}/xfreerdp-envvar.1.xml)
 
 		add_custom_target(xfreerdp.manpage ALL
 			DEPENDS xfreerdp.1)
 
-		if(OPENBSD)
-		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/xfreerdp.1 DESTINATION man/man1)
-		else()
-		install(FILES ${CMAKE_CURRENT_BINARY_DIR}/xfreerdp.1 DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/man/man1)
-		endif()
+		install_freerdp_man(${CMAKE_CURRENT_BINARY_DIR}/xfreerdp.1 1)
 	else()
 		message(WARNING "WITH_MANPAGES was set, but xsltproc was not found. man-pages will not be installed")
 	endif()
@@ -149,6 +154,10 @@ set(XRENDER_FEATURE_TYPE "RECOMMENDED")
 set(XRENDER_FEATURE_PURPOSE "rendering")
 set(XRENDER_FEATURE_DESCRIPTION "X11 render extension") 
 
+set(XRANDR_FEATURE_TYPE "RECOMMENDED")
+set(XRANDR_FEATURE_PURPOSE "tracking output configuration")
+set(XRANDR_FEATURE_DESCRIPTION "X11 randr extension")
+
 set(XFIXES_FEATURE_TYPE "RECOMMENDED")
 set(XFIXES_FEATURE_PURPOSE "X11 xfixes extension")
 set(XFIXES_FEATURE_DESCRIPTION "Useful additions to the X11 core protocol")
@@ -160,6 +169,7 @@ find_feature(Xcursor ${XCURSOR_FEATURE_TYPE} ${XCURSOR_FEATURE_PURPOSE} ${XCURSO
 find_feature(Xv ${XV_FEATURE_TYPE} ${XV_FEATURE_PURPOSE} ${XV_FEATURE_DESCRIPTION})
 find_feature(Xi ${XI_FEATURE_TYPE} ${XI_FEATURE_PURPOSE} ${XI_FEATURE_DESCRIPTION})
 find_feature(Xrender ${XRENDER_FEATURE_TYPE} ${XRENDER_FEATURE_PURPOSE} ${XRENDER_FEATURE_DESCRIPTION})
+find_feature(XRandR ${XRANDR_FEATURE_TYPE} ${XRANDR_FEATURE_PURPOSE} ${XRANDR_FEATURE_DESCRIPTION})
 find_feature(Xfixes ${XFIXES_FEATURE_TYPE} ${XFIXES_FEATURE_PURPOSE} ${XFIXES_FEATURE_DESCRIPTION})
 
 if(WITH_XINERAMA)
@@ -196,6 +206,12 @@ if(WITH_XRENDER)
 	add_definitions(-DWITH_XRENDER)
 	include_directories(${XRENDER_INCLUDE_DIRS})
 	set(${MODULE_PREFIX}_LIBS ${${MODULE_PREFIX}_LIBS} ${XRENDER_LIBRARIES})
+endif()
+
+if(WITH_XRANDR)
+	add_definitions(-DWITH_XRANDR)
+	include_directories(${XRANDR_INCLUDE_DIRS})
+	set(${MODULE_PREFIX}_LIBS ${${MODULE_PREFIX}_LIBS} ${XRANDR_LIBRARIES})
 endif()
 
 if(WITH_XFIXES)

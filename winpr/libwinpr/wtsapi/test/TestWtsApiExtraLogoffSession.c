@@ -7,16 +7,14 @@ int TestWtsApiExtraLogoffSession(int argc, char* argv[])
 {
 	BOOL bSuccess;
 	HANDLE hServer;
-	DWORD sessionId;
 
-	sessionId = 123;
 	hServer = WTS_CURRENT_SERVER_HANDLE;
 
 	bSuccess = WTSLogoffSession(hServer, WTS_CURRENT_SESSION, FALSE);
 
 	if (!bSuccess)
 	{
-		printf("WTSLogoffSession failed: %d\n", (int) GetLastError());
+		printf("WTSLogoffSession failed: %"PRIu32"\n", GetLastError());
 		return -1;
 	}
 

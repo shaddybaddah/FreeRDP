@@ -21,6 +21,8 @@
 #include "config.h"
 #endif
 
+#include <errno.h>
+
 #include <winpr/crt.h>
 #include <winpr/print.h>
 #include <winpr/stream.h>
@@ -35,6 +37,8 @@
 #include "http.h"
 
 #define TAG FREERDP_TAG("core.gateway.http")
+
+#define RESPONSE_SIZE_LIMIT 64 * 1024 * 1024
 
 static char* string_strnstr(const char* str1, const char* str2, size_t slen)
 {
@@ -52,12 +56,12 @@ static char* string_strnstr(const char* str1, const char* str2, size_t slen)
 				if (slen-- < 1 || (sc = *str1++) == '\0')
 					return NULL;
 			}
-			while(sc != c);
+			while (sc != c);
 
 			if (len > slen)
 				return NULL;
 		}
-		while(strncmp(str1, str2, len) != 0);
+		while (strncmp(str1, str2, len) != 0);
 
 		str1--;
 	}
@@ -73,12 +77,7 @@ static BOOL strings_equals_nocase(void* obj1, void* obj2)
 	return _stricmp(obj1, obj2) == 0;
 }
 
-static void string_free(void* obj1)
-{
-	free(obj1);
-}
-
-HttpContext* http_context_new()
+HttpContext* http_context_new(void)
 {
 	return (HttpContext*) calloc(1, sizeof(HttpContext));
 }
@@ -182,6 +181,13 @@ BOOL http_context_set_rdg_connection_id(HttpContext* context, const char* RdgCon
 	return TRUE;
 }
 
+BOOL http_context_set_rdg_auth_scheme(HttpContext* context, const char* RdgAuthScheme)
+{
+	free(context->RdgAuthScheme);
+	context->RdgAuthScheme = _strdup(RdgAuthScheme);
+	return context->RdgAuthScheme != NULL;
+}
+
 void http_context_free(HttpContext* context)
 {
 	if (context)
@@ -195,6 +201,7 @@ void http_context_free(HttpContext* context)
 		free(context->Connection);
 		free(context->Pragma);
 		free(context->RdgConnectionId);
+		free(context->RdgAuthScheme);
 		free(context);
 	}
 }
@@ -254,11 +261,10 @@ BOOL http_request_set_transfer_encoding(HttpRequest* request, const char* Transf
 	return TRUE;
 }
 
-char* http_encode_body_line(char* param, char* value)
+static char* http_encode_body_line(const char* param, const char* value)
 {
 	char* line;
 	int length;
-
 	length = strlen(param) + strlen(value) + 2;
 	line = (char*) malloc(length + 1);
 
@@ -269,50 +275,50 @@ char* http_encode_body_line(char* param, char* value)
 	return line;
 }
 
-char* http_encode_content_length_line(int ContentLength)
+static char* http_encode_content_length_line(int ContentLength)
 {
+	const char* key = "Content-Length:";
 	char* line;
 	int length;
 	char str[32];
-
 	_itoa_s(ContentLength, str, sizeof(str), 10);
-	length = strlen("Content-Length") + strlen(str) + 2;
+	length = strlen(key) + strlen(str) + 2;
 	line = (char*) malloc(length + 1);
 
 	if (!line)
 		return NULL;
 
-	sprintf_s(line, length + 1, "Content-Length: %s", str);
+	sprintf_s(line, length + 1, "%s %s", key, str);
 	return line;
 }
 
-char* http_encode_header_line(char* Method, char* URI)
+static char* http_encode_header_line(const char* Method, const char* URI)
 {
+	const char* key = "HTTP/1.1";
 	char* line;
 	int length;
-
-	length = strlen("HTTP/1.1") + strlen(Method) + strlen(URI) + 2;
+	length = strlen(key) + strlen(Method) + strlen(URI) + 2;
 	line = (char*)malloc(length + 1);
 
 	if (!line)
 		return NULL;
 
-	sprintf_s(line, length + 1, "%s %s HTTP/1.1", Method, URI);
+	sprintf_s(line, length + 1, "%s %s %s", Method, URI, key);
 	return line;
 }
 
-char* http_encode_authorization_line(char* AuthScheme, char* AuthParam)
+static char* http_encode_authorization_line(const char* AuthScheme, const char* AuthParam)
 {
+	const char* key = "Authorization:";
 	char* line;
 	int length;
-
-	length = strlen("Authorization") + strlen(AuthScheme) + strlen(AuthParam) + 3;
+	length = strlen(key) + strlen(AuthScheme) + strlen(AuthParam) + 3;
 	line = (char*) malloc(length + 1);
 
 	if (!line)
 		return NULL;
 
-	sprintf_s(line, length + 1, "Authorization: %s %s", AuthScheme, AuthParam);
+	sprintf_s(line, length + 1, "%s %s %s", key, AuthScheme, AuthParam);
 	return line;
 }
 
@@ -322,7 +328,6 @@ wStream* http_request_write(HttpContext* context, HttpRequest* request)
 	int i, count;
 	char** lines;
 	int length = 0;
-
 	count = 0;
 	lines = (char**) calloc(32, sizeof(char*));
 
@@ -335,53 +340,34 @@ wStream* http_request_write(HttpContext* context, HttpRequest* request)
 	lines[count++] = http_encode_body_line("Pragma", context->Pragma);
 	lines[count++] = http_encode_body_line("Accept", context->Accept);
 	lines[count++] = http_encode_body_line("User-Agent", context->UserAgent);
-	lines[count++] = http_encode_content_length_line(request->ContentLength);
 	lines[count++] = http_encode_body_line("Host", context->Host);
+
+	if (!context->RdgAuthScheme)
+		lines[count++] = http_encode_content_length_line(request->ContentLength);
+
+	if (context->RdgConnectionId)
+		lines[count++] = http_encode_body_line("RDG-Connection-Id", context->RdgConnectionId);
+
+	if (context->RdgAuthScheme)
+		lines[count++] = http_encode_body_line("RDG-Auth-Scheme", context->RdgAuthScheme);
+
+	if (request->TransferEncoding)
+		lines[count++] = http_encode_body_line("Transfer-Encoding", request->TransferEncoding);
+
+	if (request->Authorization)
+	{
+		lines[count++] = http_encode_body_line("Authorization", request->Authorization);
+	}
+	else if (request->AuthScheme && request->AuthParam)
+	{
+		lines[count++] = http_encode_authorization_line(request->AuthScheme, request->AuthParam);
+	}
 
 	/* check that everything went well */
 	for (i = 0; i < count; i++)
 	{
 		if (!lines[i])
 			goto out_free;
-	}
-
-	if (context->RdgConnectionId)
-	{
-		lines[count] = http_encode_body_line("RDG-Connection-Id", context->RdgConnectionId);
-
-		if (!lines[count])
-			goto out_free;
-
-		count++;
-	}
-
-	if (request->TransferEncoding)
-	{
-		lines[count] = http_encode_body_line("Transfer-Encoding", request->TransferEncoding);
-
-		if (!lines[count])
-			goto out_free;
-
-		count++;
-	}
-
-	if (request->Authorization)
-	{
-		lines[count] = http_encode_body_line("Authorization", request->Authorization);
-
-		if (!lines[count])
-			goto out_free;
-
-		count++;
-	}
-	else if (request->AuthScheme && request->AuthParam)
-	{
-		lines[count] = http_encode_authorization_line(request->AuthScheme, request->AuthParam);
-
-		if (!lines[count])
-			goto out_free;
-
-		count++;
 	}
 
 	for (i = 0; i < count; i++)
@@ -409,8 +395,8 @@ wStream* http_request_write(HttpContext* context, HttpRequest* request)
 	Stream_Rewind(s, 1); /* don't include null terminator in length */
 	Stream_SetLength(s, Stream_GetPosition(s));
 	return s;
-
 out_free:
+
 	for (i = 0; i < count; i++)
 		free(lines[i]);
 
@@ -418,7 +404,7 @@ out_free:
 	return NULL;
 }
 
-HttpRequest* http_request_new()
+HttpRequest* http_request_new(void)
 {
 	return (HttpRequest*) calloc(1, sizeof(HttpRequest));
 }
@@ -438,7 +424,7 @@ void http_request_free(HttpRequest* request)
 	free(request);
 }
 
-BOOL http_response_parse_header_status_line(HttpResponse* response, char* status_line)
+static BOOL http_response_parse_header_status_line(HttpResponse* response, char* status_line)
 {
 	char* separator = NULL;
 	char* status_code;
@@ -458,8 +444,16 @@ BOOL http_response_parse_header_status_line(HttpResponse* response, char* status
 
 	reason_phrase = separator + 1;
 	*separator = '\0';
-	response->StatusCode = atoi(status_code);
-	response->ReasonPhrase = _strdup(reason_phrase);
+	errno = 0;
+	{
+		long val = strtol(status_code, NULL, 0);
+
+		if ((errno != 0) || (val < 0) || (val > INT16_MAX))
+			return FALSE;
+
+		response->StatusCode = strtol(status_code, NULL, 0);
+	}
+	response->ReasonPhrase = reason_phrase;
 
 	if (!response->ReasonPhrase)
 		return FALSE;
@@ -468,17 +462,25 @@ BOOL http_response_parse_header_status_line(HttpResponse* response, char* status
 	return TRUE;
 }
 
-BOOL http_response_parse_header_field(HttpResponse* response, char* name, char* value)
+static BOOL http_response_parse_header_field(HttpResponse* response, const char* name,
+        const char* value)
 {
 	BOOL status = TRUE;
 
 	if (_stricmp(name, "Content-Length") == 0)
 	{
-		response->ContentLength = atoi(value);
+		unsigned long long val;
+		errno = 0;
+		val = _strtoui64(value, NULL, 0);
+
+		if ((errno != 0) || (val > INT32_MAX))
+			return FALSE;
+
+		response->ContentLength = val;
 	}
 	else if (_stricmp(name, "Content-Type") == 0)
 	{
-		response->ContentType = _strdup(value);
+		response->ContentType = value;
 
 		if (!response->ContentType)
 			return FALSE;
@@ -486,9 +488,8 @@ BOOL http_response_parse_header_field(HttpResponse* response, char* name, char* 
 	else if (_stricmp(name, "WWW-Authenticate") == 0)
 	{
 		char* separator = NULL;
-		char* authScheme = NULL;
-		char* authValue = NULL;
-
+		const char* authScheme = NULL;
+		const char* authValue = NULL;
 		separator = strchr(value, ' ');
 
 		if (separator)
@@ -500,21 +501,15 @@ BOOL http_response_parse_header_field(HttpResponse* response, char* name, char* 
 			 * 					opaque="5ccc069c403ebaf9f0171e9517f40e41"
 			 */
 			*separator = '\0';
-			authScheme = _strdup(value);
-			authValue = _strdup(separator + 1);
+			authScheme = value;
+			authValue = separator + 1;
 
 			if (!authScheme || !authValue)
-			{
-				free(authScheme);
-				free(authValue);
 				return FALSE;
-			}
-
-			*separator = ' ';
 		}
 		else
 		{
-			authScheme = _strdup(value);
+			authScheme = value;
 
 			if (!authScheme)
 				return FALSE;
@@ -522,16 +517,16 @@ BOOL http_response_parse_header_field(HttpResponse* response, char* name, char* 
 			authValue = NULL;
 		}
 
-		status = ListDictionary_Add(response->Authenticates, authScheme, authValue);
+		status = ListDictionary_Add(response->Authenticates, (void*)authScheme, (void*)authValue);
 	}
 
 	return status;
 }
 
-BOOL http_response_parse_header(HttpResponse* response)
+static BOOL http_response_parse_header(HttpResponse* response)
 {
 	char c;
-	int count;
+	size_t count;
 	char* line;
 	char* name;
 	char* value;
@@ -551,6 +546,7 @@ BOOL http_response_parse_header(HttpResponse* response)
 	for (count = 1; count < response->count; count++)
 	{
 		line = response->lines[count];
+
 		/**
 		 * name         end_of_header
 		 * |            |
@@ -612,42 +608,134 @@ void http_response_print(HttpResponse* response)
 
 HttpResponse* http_response_recv(rdpTls* tls)
 {
-	wStream* s;
-	int size;
-	int count;
-	int status;
-	int position;
-	char* line;
-	char* buffer;
-	char* header = NULL;
-	char* payload;
-	int bodyLength;
-	int payloadOffset;
+	size_t size;
+	size_t position;
+	size_t bodyLength = 0;
+	size_t payloadOffset;
 	HttpResponse* response;
-
 	size = 2048;
-	payload = NULL;
 	payloadOffset = 0;
-
-	s = Stream_New(NULL, size);
-
-	if (!s)
-		goto out_free;
-
-	buffer = (char*) Stream_Buffer(s);
-
 	response = http_response_new();
 
 	if (!response)
-		goto out_free;
+		return NULL;
 
 	response->ContentLength = 0;
 
-	while (TRUE)
+	while (!payloadOffset)
 	{
-		while (!payloadOffset)
+		int status = BIO_read(tls->bio, Stream_Pointer(response->data),
+		                      Stream_Capacity(response->data) - Stream_GetPosition(response->data));
+
+		if (status <= 0)
 		{
-			status = BIO_read(tls->bio, Stream_Pointer(s), Stream_Capacity(s) - Stream_GetPosition(s));
+			if (!BIO_should_retry(tls->bio))
+				goto out_error;
+
+			USleep(100);
+			continue;
+		}
+
+#ifdef HAVE_VALGRIND_MEMCHECK_H
+		VALGRIND_MAKE_MEM_DEFINED(Stream_Pointer(response->data), status);
+#endif
+		Stream_Seek(response->data, status);
+
+		if (Stream_GetRemainingLength(response->data) < 1024)
+		{
+			if (!Stream_EnsureRemainingCapacity(response->data, 1024))
+				goto out_error;
+		}
+
+		position = Stream_GetPosition(response->data);
+
+		if (position > RESPONSE_SIZE_LIMIT)
+		{
+			WLog_ERR(TAG, "Request header too large! (%"PRIdz" bytes) Aborting!", bodyLength);
+			goto out_error;
+		}
+
+		if (position >= 4)
+		{
+			char* buffer = Stream_Buffer(response->data);
+			const char* line = string_strnstr(buffer, "\r\n\r\n", position);
+
+			if (line)
+				payloadOffset = (line - buffer) + 4;
+		}
+	}
+
+	if (payloadOffset)
+	{
+		size_t count = 0;
+		char* buffer = Stream_Buffer(response->data);
+		char* line = Stream_Buffer(response->data);
+
+		while ((line = string_strnstr(line, "\r\n", payloadOffset - (line - buffer) - 2)))
+		{
+			line += 2;
+			count++;
+		}
+
+		response->count = count;
+
+		if (count)
+		{
+			response->lines = (char**) calloc(response->count, sizeof(char*));
+
+			if (!response->lines)
+				goto out_error;
+		}
+
+		buffer[payloadOffset - 1] = '\0';
+		buffer[payloadOffset - 2] = '\0';
+		count = 0;
+		line = strtok(buffer, "\r\n");
+
+		while (line && response->lines)
+		{
+			response->lines[count] = line;
+
+			if (!response->lines[count])
+				goto out_error;
+
+			line = strtok(NULL, "\r\n");
+			count++;
+		}
+
+		if (!http_response_parse_header(response))
+			goto out_error;
+
+		response->BodyLength = Stream_GetPosition(response->data) - payloadOffset;
+		bodyLength = 0; /* expected body length */
+
+		if (response->ContentType)
+		{
+			if (_stricmp(response->ContentType, "application/rpc") != 0)
+				bodyLength = response->ContentLength;
+			else if (_stricmp(response->ContentType, "text/plain") == 0)
+				bodyLength = response->ContentLength;
+			else if (_stricmp(response->ContentType, "text/html") == 0)
+				bodyLength = response->ContentLength;
+		}
+		else
+			bodyLength = response->BodyLength;
+
+		if (bodyLength > RESPONSE_SIZE_LIMIT)
+		{
+			WLog_ERR(TAG, "Expected request body too large! (%"PRIdz" bytes) Aborting!", bodyLength);
+			goto out_error;
+		}
+
+		/* Fetch remaining body! */
+		while (response->BodyLength < bodyLength)
+		{
+			int status;
+
+			if (!Stream_EnsureRemainingCapacity(response->data, bodyLength - response->BodyLength))
+				goto out_error;
+
+			status = BIO_read(tls->bio, Stream_Pointer(response->data), bodyLength - response->BodyLength);
 
 			if (status <= 0)
 			{
@@ -658,141 +746,36 @@ HttpResponse* http_response_recv(rdpTls* tls)
 				continue;
 			}
 
-#ifdef HAVE_VALGRIND_MEMCHECK_H
-			VALGRIND_MAKE_MEM_DEFINED(Stream_Pointer(s), status);
-#endif
+			Stream_Seek(response->data, status);
+			response->BodyLength += status;
 
-			Stream_Seek(s, status);
-
-			if (Stream_GetRemainingLength(s) < 1024)
+			if (response->BodyLength > RESPONSE_SIZE_LIMIT)
 			{
-				if (!Stream_EnsureRemainingCapacity(s, 1024))
-					goto out_error;
-				buffer = (char*) Stream_Buffer(s);
-				payload = &buffer[payloadOffset];
-			}
-
-			position = Stream_GetPosition(s);
-
-			if (position >= 4)
-			{
-				line = string_strnstr(buffer, "\r\n\r\n", position);
-
-				if (line)
-				{
-					payloadOffset = (line - buffer) + 4;
-					payload = &buffer[payloadOffset];
-				}
+				WLog_ERR(TAG, "Request body too large! (%"PRIdz" bytes) Aborting!", response->BodyLength);
+				goto out_error;
 			}
 		}
 
-		if (payloadOffset)
+		if (response->BodyLength > 0)
 		{
-			count = 0;
-			line = buffer;
-
-			position = Stream_GetPosition(s);
-
-			while ((line = string_strnstr(line, "\r\n", payloadOffset - (line - buffer) - 2)))
-			{
-				line += 2;
-				count++;
-			}
-
-			response->count = count;
-
-			if (count)
-			{
-				response->lines = (char**) calloc(response->count, sizeof(char*));
-
-				if (!response->lines)
-					goto out_error;
-			}
-
-			header = (char*) malloc(payloadOffset);
-
-			if (!header)
-				goto out_error;
-
-			CopyMemory(header, buffer, payloadOffset);
-			header[payloadOffset - 1] = '\0';
-			header[payloadOffset - 2] = '\0';
-
-			count = 0;
-			line = strtok(header, "\r\n");
-
-			while (line && response->lines)
-			{
-				response->lines[count] = _strdup(line);
-
-				if (!response->lines[count])
-					goto out_error;
-
-				line = strtok(NULL, "\r\n");
-				count++;
-			}
-
-			if (!http_response_parse_header(response))
-				goto out_error;
-
-			response->BodyLength = Stream_GetPosition(s) - payloadOffset;
-
-			if (response->BodyLength > 0)
-			{
-				response->BodyContent = (BYTE*) malloc(response->BodyLength);
-
-				if (!response->BodyContent)
-					goto out_error;
-
-				CopyMemory(response->BodyContent, payload, response->BodyLength);
-			}
-
-			bodyLength = 0; /* expected body length */
-
-			if (response->ContentType)
-			{
-				if (_stricmp(response->ContentType, "application/rpc") != 0)
-					bodyLength = response->ContentLength;
-				else if (_stricmp(response->ContentType, "text/plain") == 0)
-					bodyLength = response->ContentLength;
-				else if (_stricmp(response->ContentType, "text/html") == 0)
-					bodyLength = response->ContentLength;
-			}
-			else
-			{
-				bodyLength = response->BodyLength;
-			}
-
-			if (bodyLength != response->BodyLength)
-			{
-				WLog_WARN(TAG, "http_response_recv: %s unexpected body length: actual: %d, expected: %d",
-						response->ContentType, bodyLength, response->BodyLength);
-			}
-
-			break;
+			response->BodyContent = &(Stream_Buffer(response->data))[payloadOffset];
+			response->BodyLength = bodyLength;
 		}
 
-		if (Stream_GetRemainingLength(s) < 1024)
+		if (bodyLength != response->BodyLength)
 		{
-			if (!Stream_EnsureRemainingCapacity(s, 1024))
-				goto out_error;
-			buffer = (char*) Stream_Buffer(s);
-			payload = &buffer[payloadOffset];
+			WLog_WARN(TAG, "http_response_recv: %s unexpected body length: actual: %d, expected: %d",
+			          response->ContentType, bodyLength, response->BodyLength);
 		}
 	}
 
-	free(header);
-	Stream_Free(s, TRUE);
 	return response;
 out_error:
 	http_response_free(response);
-	free(header);
-out_free:
-	Stream_Free(s, TRUE);
 	return NULL;
 }
 
-HttpResponse* http_response_new()
+HttpResponse* http_response_new(void)
 {
 	HttpResponse* response = (HttpResponse*) calloc(1, sizeof(HttpResponse));
 
@@ -800,44 +783,30 @@ HttpResponse* http_response_new()
 		return NULL;
 
 	response->Authenticates = ListDictionary_New(FALSE);
+
 	if (!response->Authenticates)
-	{
-		free(response);
-		return NULL;
-	}
+		goto fail;
+
+	response->data = Stream_New(NULL, 2048);
+
+	if (!response->data)
+		goto fail;
 
 	ListDictionary_KeyObject(response->Authenticates)->fnObjectEquals = strings_equals_nocase;
-	ListDictionary_KeyObject(response->Authenticates)->fnObjectFree = string_free;
-
 	ListDictionary_ValueObject(response->Authenticates)->fnObjectEquals = strings_equals_nocase;
-	ListDictionary_ValueObject(response->Authenticates)->fnObjectFree = string_free;
-
 	return response;
+fail:
+	http_response_free(response);
+	return NULL;
 }
 
 void http_response_free(HttpResponse* response)
 {
-	int i;
-
 	if (!response)
 		return;
 
-	if (response->lines)
-		for (i = 0; i < response->count; i++)
-			free(response->lines[i]);
-
 	free(response->lines);
-	free(response->ReasonPhrase);
-
-	free(response->ContentType);
-
 	ListDictionary_Free(response->Authenticates);
-
-	if (response->BodyContent)
-	{
-		free(response->BodyContent);
-		response->BodyContent = NULL;
-	}
-
+	Stream_Free(response->data, TRUE);
 	free(response);
 }

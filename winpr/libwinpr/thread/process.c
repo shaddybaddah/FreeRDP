@@ -89,6 +89,7 @@
 
 static char* FindApplicationPath(char* application)
 {
+	LPCSTR pathName = "PATH";
 	char* path;
 	char* save;
 	DWORD nSize;
@@ -101,7 +102,7 @@ static char* FindApplicationPath(char* application)
 	if (application[0] == '/')
 		return _strdup(application);
 
-	nSize = GetEnvironmentVariableA("PATH", NULL, 0);
+	nSize = GetEnvironmentVariableA(pathName, NULL, 0);
 
 	if (!nSize)
 		return _strdup(application);
@@ -110,7 +111,11 @@ static char* FindApplicationPath(char* application)
 	if (!lpSystemPath)
 		return NULL;
 
-	nSize = GetEnvironmentVariableA("PATH", lpSystemPath, nSize);
+	if (GetEnvironmentVariableA(pathName, lpSystemPath, nSize) != nSize - 1)
+	{
+		free(lpSystemPath);
+		return NULL;
+	}
 
 	save = NULL;
 	path = strtok_s(lpSystemPath, ":", &save);
@@ -157,7 +162,6 @@ BOOL _CreateProcessExA(HANDLE hToken, DWORD dwLogonFlags,
 	sigset_t newSigMask;
 	BOOL restoreSigMask = FALSE;
 
-	pid = 0;
 	numArgs = 0;
 	lpszEnvironmentBlock = NULL;
 

@@ -42,7 +42,7 @@ add_executable(${MODULE_NAME} ${${MODULE_PREFIX}_SRCS})
 
 set(${MODULE_PREFIX}_LIBS winpr-tools)
 
-target_link_libraries(${MODULE_NAME} ${${MODULE_PREFIX}_LIBS})
+target_link_libraries(${MODULE_NAME} ${${MODULE_PREFIX}_LIBS} winpr)
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "WinPR/Tools")
 
@@ -50,3 +50,6 @@ install(TARGETS ${MODULE_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT too
 if (WITH_DEBUG_SYMBOLS AND MSVC)
     install(FILES ${CMAKE_PDB_BINARY_DIR}/${MODULE_NAME}.pdb DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT symbols)
 endif()
+
+configure_file(winpr-makecert.1.in ${CMAKE_CURRENT_BINARY_DIR}/winpr-makecert.1)
+install_freerdp_man(${CMAKE_CURRENT_BINARY_DIR}/winpr-makecert.1 1)

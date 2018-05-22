@@ -100,6 +100,7 @@ static UINT printer_cups_write_printjob(rdpPrintJob* printjob, BYTE* data, int s
 
 		if (fwrite(data, 1, size, fp) < size)
 		{
+			fclose(fp);
 			return ERROR_INTERNAL_ERROR;
 			// FIXME once this function doesn't return void anymore!
 		}
@@ -280,7 +281,7 @@ static rdpPrinter** printer_cups_enum_printers(rdpPrinterDriver* driver)
 	int i;
 
 	num_dests = cupsGetDests(&dests);
-	printers = (rdpPrinter**) calloc(1, sizeof(rdpPrinter*) * (num_dests + 1));
+	printers = (rdpPrinter**) calloc(num_dests + 1, sizeof(rdpPrinter*));
 	if (!printers)
 		return NULL;
 

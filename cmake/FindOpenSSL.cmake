@@ -24,10 +24,10 @@
 # (To distribute this file outside of CMake, substitute the full
 #  License text for the above reference.)
 
-if (UNIX)
+if (UNIX AND NOT ANDROID)
   find_package(PkgConfig QUIET)
   pkg_check_modules(_OPENSSL QUIET openssl)
-endif (UNIX)
+endif (UNIX AND NOT ANDROID)
 
 # http://www.slproweb.com/products/Win32OpenSSL.html
 SET(_OPENSSL_ROOT_HINTS
@@ -71,7 +71,15 @@ IF(WIN32)
   endif()
 ENDIF(WIN32)
 
-IF(WIN32 AND NOT CYGWIN)
+IF(ANDROID)
+    FIND_LIBRARY(OPENSSL_LIBRARIES
+      NAMES
+        "freerdp-openssl"
+      ${_OPENSSL_ROOT_HINTS_AND_PATHS}
+      PATH_SUFFIXES
+        "lib"
+    )
+ELSEIF(WIN32 AND NOT CYGWIN)
   # MINGW should go here too
   IF(MSVC)
     # /MD and /MDd are the standard values - if someone wants to use
@@ -99,6 +107,7 @@ IF(WIN32 AND NOT CYGWIN)
       NAMES
         "libeay32${MSVC_RUNTIME_SUFFIX}d"
         libeay32
+        libcrypto
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
       PATH_SUFFIXES
         ${MSVC_RUNTIME_PATH_SUFFIX}
@@ -111,6 +120,7 @@ IF(WIN32 AND NOT CYGWIN)
       NAMES
         "libeay32${MSVC_RUNTIME_SUFFIX}"
         libeay32
+        libcrypto
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
       PATH_SUFFIXES
         ${MSVC_RUNTIME_PATH_SUFFIX}
@@ -124,6 +134,7 @@ IF(WIN32 AND NOT CYGWIN)
         "ssleay32${MSVC_RUNTIME_SUFFIX}d"
         ssleay32
         ssl
+        libssl
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
       PATH_SUFFIXES
         ${MSVC_RUNTIME_PATH_SUFFIX}
@@ -137,6 +148,7 @@ IF(WIN32 AND NOT CYGWIN)
         "ssleay32${MSVC_RUNTIME_SUFFIX}"
         ssleay32
         ssl
+        libssl
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
       PATH_SUFFIXES
         ${MSVC_RUNTIME_PATH_SUFFIX}
@@ -156,6 +168,7 @@ IF(WIN32 AND NOT CYGWIN)
     FIND_LIBRARY(LIB_EAY
       NAMES
         libeay32
+        libcrypto
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
       PATH_SUFFIXES
         "lib"
@@ -165,6 +178,7 @@ IF(WIN32 AND NOT CYGWIN)
     FIND_LIBRARY(SSL_EAY
       NAMES
         ssleay32
+        libssl
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
       PATH_SUFFIXES
         "lib"
@@ -178,6 +192,7 @@ IF(WIN32 AND NOT CYGWIN)
     FIND_LIBRARY(LIB_EAY
       NAMES
         libeay32
+        libcrypto
       HINTS
         ${_OPENSSL_LIBDIR}
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
@@ -188,6 +203,7 @@ IF(WIN32 AND NOT CYGWIN)
     FIND_LIBRARY(SSL_EAY
       NAMES
         ssleay32
+        libssl
       HINTS
         ${_OPENSSL_LIBDIR}
       ${_OPENSSL_ROOT_HINTS_AND_PATHS}
@@ -230,7 +246,7 @@ ELSE(WIN32 AND NOT CYGWIN)
 
   SET(OPENSSL_LIBRARIES ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY})
 
-ENDIF(WIN32 AND NOT CYGWIN)
+ENDIF(ANDROID)
 
 function(from_hex HEX DEC)
   string(TOUPPER "${HEX}" HEX)

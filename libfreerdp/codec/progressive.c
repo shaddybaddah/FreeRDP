@@ -28,58 +28,67 @@
 #include <freerdp/primitives.h>
 #include <freerdp/codec/color.h>
 #include <freerdp/codec/progressive.h>
+#include <freerdp/codec/region.h>
 #include <freerdp/log.h>
 
 #include "rfx_differential.h"
 #include "rfx_quantization.h"
+#include "rfx_rlgr.h"
+#include "progressive.h"
 
 #define TAG FREERDP_TAG("codec.progressive")
 
-const char* progressive_get_block_type_string(UINT16 blockType)
+struct _RFX_PROGRESSIVE_UPGRADE_STATE
+{
+	BOOL nonLL;
+	wBitStream* srl;
+	wBitStream* raw;
+
+	/* SRL state */
+
+	int kp;
+	int nz;
+	BOOL mode;
+};
+typedef struct _RFX_PROGRESSIVE_UPGRADE_STATE RFX_PROGRESSIVE_UPGRADE_STATE;
+
+static const char* progressive_get_block_type_string(UINT16 blockType)
 {
 	switch (blockType)
 	{
 		case PROGRESSIVE_WBT_SYNC:
 			return "PROGRESSIVE_WBT_SYNC";
-			break;
 
 		case PROGRESSIVE_WBT_FRAME_BEGIN:
 			return "PROGRESSIVE_WBT_FRAME_BEGIN";
-			break;
 
 		case PROGRESSIVE_WBT_FRAME_END:
 			return "PROGRESSIVE_WBT_FRAME_END";
-			break;
 
 		case PROGRESSIVE_WBT_CONTEXT:
 			return "PROGRESSIVE_WBT_CONTEXT";
-			break;
 
 		case PROGRESSIVE_WBT_REGION:
 			return "PROGRESSIVE_WBT_REGION";
-			break;
 
 		case PROGRESSIVE_WBT_TILE_SIMPLE:
 			return "PROGRESSIVE_WBT_TILE_SIMPLE";
-			break;
 
 		case PROGRESSIVE_WBT_TILE_FIRST:
 			return "PROGRESSIVE_WBT_TILE_FIRST";
-			break;
 
 		case PROGRESSIVE_WBT_TILE_UPGRADE:
 			return "PROGRESSIVE_WBT_TILE_UPGRADE";
-			break;
 
 		default:
 			return "PROGRESSIVE_WBT_UNKNOWN";
-			break;
 	}
 
 	return "PROGRESSIVE_WBT_UNKNOWN";
 }
 
-void progressive_component_codec_quant_read(BYTE* block, RFX_COMPONENT_CODEC_QUANT* quantVal)
+static INLINE void progressive_component_codec_quant_read(const BYTE* block,
+        RFX_COMPONENT_CODEC_QUANT* quantVal)
 {
 	quantVal->LL3 = block[0] & 0x0F;
 	quantVal->HL3 = block[0] >> 4;
@@ -93,7 +102,7 @@ void progressive_component_codec_quant_read(BYTE* block, RFX_COMPONENT_CODEC_QUA
 	quantVal->HH1 = block[4] >> 4;
 }
 
-void progressive_rfx_quant_ladd(RFX_COMPONENT_CODEC_QUANT* q, int val)
+static INLINE void progressive_rfx_quant_ladd(RFX_COMPONENT_CODEC_QUANT* q, int val)
 {
 	q->HL1 += val; /* HL1 */
 	q->LH1 += val; /* LH1 */
@@ -107,7 +116,9 @@ void progressive_rfx_quant_ladd(RFX_COMPONENT_CODEC_QUANT* q, int val)
 	q->LL3 += val; /* LL3 */
 }
 
-void progressive_rfx_quant_add(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODEC_QUANT* q2, RFX_COMPONENT_CODEC_QUANT* dst)
+static INLINE void progressive_rfx_quant_add(RFX_COMPONENT_CODEC_QUANT* q1,
+        RFX_COMPONENT_CODEC_QUANT* q2,
+        RFX_COMPONENT_CODEC_QUANT* dst)
 {
 	dst->HL1 = q1->HL1 + q2->HL1; /* HL1 */
 	dst->LH1 = q1->LH1 + q2->LH1; /* LH1 */
@@ -121,7 +132,7 @@ void progressive_rfx_quant_add(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODE
 	dst->LL3 = q1->LL3 + q2->LL3; /* LL3 */
 }
 
-void progressive_rfx_quant_lsub(RFX_COMPONENT_CODEC_QUANT* q, int val)
+static INLINE void progressive_rfx_quant_lsub(RFX_COMPONENT_CODEC_QUANT* q, int val)
 {
 	q->HL1 -= val; /* HL1 */
 	q->LH1 -= val; /* LH1 */
@@ -135,7 +146,9 @@ void progressive_rfx_quant_lsub(RFX_COMPONENT_CODEC_QUANT* q, int val)
 	q->LL3 -= val; /* LL3 */
 }
 
-void progressive_rfx_quant_sub(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODEC_QUANT* q2, RFX_COMPONENT_CODEC_QUANT* dst)
+static INLINE void progressive_rfx_quant_sub(RFX_COMPONENT_CODEC_QUANT* q1,
+        RFX_COMPONENT_CODEC_QUANT* q2,
+        RFX_COMPONENT_CODEC_QUANT* dst)
 {
 	dst->HL1 = q1->HL1 - q2->HL1; /* HL1 */
 	dst->LH1 = q1->LH1 - q2->LH1; /* LH1 */
@@ -149,118 +162,172 @@ void progressive_rfx_quant_sub(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODE
 	dst->LL3 = q1->LL3 - q2->LL3; /* LL3 */
 }
 
-BOOL progressive_rfx_quant_lcmp_less_equal(RFX_COMPONENT_CODEC_QUANT* q, int val)
+static INLINE BOOL progressive_rfx_quant_lcmp_less_equal(RFX_COMPONENT_CODEC_QUANT* q,
+        int val)
 {
 	if (q->HL1 > val) return FALSE; /* HL1 */
+
 	if (q->LH1 > val) return FALSE; /* LH1 */
+
 	if (q->HH1 > val) return FALSE; /* HH1 */
+
 	if (q->HL2 > val) return FALSE; /* HL2 */
+
 	if (q->LH2 > val) return FALSE; /* LH2 */
+
 	if (q->HH2 > val) return FALSE; /* HH2 */
+
 	if (q->HL3 > val) return FALSE; /* HL3 */
+
 	if (q->LH3 > val) return FALSE; /* LH3 */
+
 	if (q->HH3 > val) return FALSE; /* HH3 */
+
 	if (q->LL3 > val) return FALSE; /* LL3 */
+
 	return TRUE;
 }
 
-BOOL progressive_rfx_quant_cmp_less_equal(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODEC_QUANT* q2)
+static INLINE BOOL progressive_rfx_quant_cmp_less_equal(RFX_COMPONENT_CODEC_QUANT* q1,
+        RFX_COMPONENT_CODEC_QUANT* q2)
 {
 	if (q1->HL1 > q2->HL1) return FALSE; /* HL1 */
+
 	if (q1->LH1 > q2->LH1) return FALSE; /* LH1 */
+
 	if (q1->HH1 > q2->HH1) return FALSE; /* HH1 */
+
 	if (q1->HL2 > q2->HL2) return FALSE; /* HL2 */
+
 	if (q1->LH2 > q2->LH2) return FALSE; /* LH2 */
+
 	if (q1->HH2 > q2->HH2) return FALSE; /* HH2 */
+
 	if (q1->HL3 > q2->HL3) return FALSE; /* HL3 */
+
 	if (q1->LH3 > q2->LH3) return FALSE; /* LH3 */
+
 	if (q1->HH3 > q2->HH3) return FALSE; /* HH3 */
+
 	if (q1->LL3 > q2->LL3) return FALSE; /* LL3 */
+
 	return TRUE;
 }
 
-BOOL progressive_rfx_quant_lcmp_greater_equal(RFX_COMPONENT_CODEC_QUANT* q, int val)
+static INLINE BOOL progressive_rfx_quant_lcmp_greater_equal(RFX_COMPONENT_CODEC_QUANT* q,
+        int val)
 {
 	if (q->HL1 < val) return FALSE; /* HL1 */
+
 	if (q->LH1 < val) return FALSE; /* LH1 */
+
 	if (q->HH1 < val) return FALSE; /* HH1 */
+
 	if (q->HL2 < val) return FALSE; /* HL2 */
+
 	if (q->LH2 < val) return FALSE; /* LH2 */
+
 	if (q->HH2 < val) return FALSE; /* HH2 */
+
 	if (q->HL3 < val) return FALSE; /* HL3 */
+
 	if (q->LH3 < val) return FALSE; /* LH3 */
+
 	if (q->HH3 < val) return FALSE; /* HH3 */
+
 	if (q->LL3 < val) return FALSE; /* LL3 */
+
 	return TRUE;
 }
 
-BOOL progressive_rfx_quant_cmp_greater_equal(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODEC_QUANT* q2)
+static INLINE BOOL progressive_rfx_quant_cmp_greater_equal(RFX_COMPONENT_CODEC_QUANT* q1,
+        RFX_COMPONENT_CODEC_QUANT* q2)
 {
 	if (q1->HL1 < q2->HL1) return FALSE; /* HL1 */
+
 	if (q1->LH1 < q2->LH1) return FALSE; /* LH1 */
+
 	if (q1->HH1 < q2->HH1) return FALSE; /* HH1 */
+
 	if (q1->HL2 < q2->HL2) return FALSE; /* HL2 */
+
 	if (q1->LH2 < q2->LH2) return FALSE; /* LH2 */
+
 	if (q1->HH2 < q2->HH2) return FALSE; /* HH2 */
+
 	if (q1->HL3 < q2->HL3) return FALSE; /* HL3 */
+
 	if (q1->LH3 < q2->LH3) return FALSE; /* LH3 */
+
 	if (q1->HH3 < q2->HH3) return FALSE; /* HH3 */
+
 	if (q1->LL3 < q2->LL3) return FALSE; /* LL3 */
+
 	return TRUE;
 }
 
-BOOL progressive_rfx_quant_cmp_equal(RFX_COMPONENT_CODEC_QUANT* q1, RFX_COMPONENT_CODEC_QUANT* q2)
+static INLINE BOOL progressive_rfx_quant_cmp_equal(RFX_COMPONENT_CODEC_QUANT* q1,
+        RFX_COMPONENT_CODEC_QUANT* q2)
 {
 	if (q1->HL1 != q2->HL1) return FALSE; /* HL1 */
+
 	if (q1->LH1 != q2->LH1) return FALSE; /* LH1 */
+
 	if (q1->HH1 != q2->HH1) return FALSE; /* HH1 */
+
 	if (q1->HL2 != q2->HL2) return FALSE; /* HL2 */
+
 	if (q1->LH2 != q2->LH2) return FALSE; /* LH2 */
+
 	if (q1->HH2 != q2->HH2) return FALSE; /* HH2 */
+
 	if (q1->HL3 != q2->HL3) return FALSE; /* HL3 */
+
 	if (q1->LH3 != q2->LH3) return FALSE; /* LH3 */
+
 	if (q1->HH3 != q2->HH3) return FALSE; /* HH3 */
+
 	if (q1->LL3 != q2->LL3) return FALSE; /* LL3 */
+
 	return TRUE;
 }
 
-void progressive_rfx_quant_print(RFX_COMPONENT_CODEC_QUANT* q, const char* name)
+static void progressive_rfx_quant_print(RFX_COMPONENT_CODEC_QUANT* q, const char* name)
 {
-	fprintf(stderr, "%s: HL1: %d LH1: %d HH1: %d HL2: %d LH2: %d HH2: %d HL3: %d LH3: %d HH3: %d LL3: %d\n",
-			name, q->HL1, q->LH1, q->HH1, q->HL2, q->LH2, q->HH2, q->HL3, q->LH3, q->HH3, q->LL3);
+	fprintf(stderr,
+	        "%s: HL1: %"PRIu8" LH1: %"PRIu8" HH1: %"PRIu8" HL2: %"PRIu8" LH2: %"PRIu8" HH2: %"PRIu8" HL3: %"PRIu8" LH3: %"PRIu8" HH3: %"PRIu8" LL3: %"PRIu8"\n",
+	        name, q->HL1, q->LH1, q->HH1, q->HL2, q->LH2, q->HH2, q->HL3, q->LH3, q->HH3,
+	        q->LL3);
 }
 
-int progressive_set_surface_data(PROGRESSIVE_CONTEXT* progressive, UINT16 surfaceId, void* pData)
+
+static INLINE BOOL progressive_set_surface_data(PROGRESSIVE_CONTEXT* progressive,
+        UINT16 surfaceId, void* pData)
 {
 	ULONG_PTR key;
-
 	key = ((ULONG_PTR) surfaceId) + 1;
 
 	if (pData)
-		HashTable_Add(progressive->SurfaceContexts, (void*) key, pData);
-	else
-		HashTable_Remove(progressive->SurfaceContexts, (void*) key);
+		return HashTable_Add(progressive->SurfaceContexts, (void *)key, pData) >= 0;
 
-	return 1;
+	HashTable_Remove(progressive->SurfaceContexts, (void*) key);
+	return TRUE;
 }
 
-void* progressive_get_surface_data(PROGRESSIVE_CONTEXT* progressive, UINT16 surfaceId)
+static INLINE void* progressive_get_surface_data(PROGRESSIVE_CONTEXT* progressive, UINT16 surfaceId)
 {
 	ULONG_PTR key;
 	void* pData = NULL;
-
 	key = ((ULONG_PTR) surfaceId) + 1;
-
 	pData = HashTable_GetItemValue(progressive->SurfaceContexts, (void*) key);
-
 	return pData;
 }
 
-PROGRESSIVE_SURFACE_CONTEXT* progressive_surface_context_new(UINT16 surfaceId, UINT32 width, UINT32 height)
+static PROGRESSIVE_SURFACE_CONTEXT* progressive_surface_context_new(UINT16 surfaceId, UINT32 width, UINT32 height)
 {
 	PROGRESSIVE_SURFACE_CONTEXT* surface;
-
-	surface = (PROGRESSIVE_SURFACE_CONTEXT*) calloc(1, sizeof(PROGRESSIVE_SURFACE_CONTEXT));
+	surface = (PROGRESSIVE_SURFACE_CONTEXT*) calloc(
+	              1, sizeof(PROGRESSIVE_SURFACE_CONTEXT));
 
 	if (!surface)
 		return NULL;
@@ -271,7 +338,6 @@ PROGRESSIVE_SURFACE_CONTEXT* progressive_surface_context_new(UINT16 surfaceId, U
 	surface->gridWidth = (width + (64 - width % 64)) / 64;
 	surface->gridHeight = (height + (64 - height % 64)) / 64;
 	surface->gridSize = surface->gridWidth * surface->gridHeight;
-
 	surface->tiles = (RFX_PROGRESSIVE_TILE*) calloc(surface->gridSize, sizeof(RFX_PROGRESSIVE_TILE));
 
 	if (!surface->tiles)
@@ -283,7 +349,7 @@ PROGRESSIVE_SURFACE_CONTEXT* progressive_surface_context_new(UINT16 surfaceId, U
 	return surface;
 }
 
-void progressive_surface_context_free(PROGRESSIVE_SURFACE_CONTEXT* surface)
+static void progressive_surface_context_free(PROGRESSIVE_SURFACE_CONTEXT* surface)
 {
 	UINT32 index;
 	RFX_PROGRESSIVE_TILE* tile;
@@ -306,11 +372,11 @@ void progressive_surface_context_free(PROGRESSIVE_SURFACE_CONTEXT* surface)
 	free(surface);
 }
 
-int progressive_create_surface_context(PROGRESSIVE_CONTEXT* progressive, UINT16 surfaceId, UINT32 width, UINT32 height)
+INT32 progressive_create_surface_context(PROGRESSIVE_CONTEXT* progressive,
+        UINT16 surfaceId, UINT32 width, UINT32 height)
 {
 	PROGRESSIVE_SURFACE_CONTEXT* surface;
-
-	surface = (PROGRESSIVE_SURFACE_CONTEXT*) progressive_get_surface_data(progressive, surfaceId);
+	surface = (PROGRESSIVE_SURFACE_CONTEXT *)progressive_get_surface_data(progressive, surfaceId);
 
 	if (!surface)
 	{
@@ -319,17 +385,21 @@ int progressive_create_surface_context(PROGRESSIVE_CONTEXT* progressive, UINT16 
 		if (!surface)
 			return -1;
 
-		progressive_set_surface_data(progressive, surfaceId, (void*) surface);
+		if (!progressive_set_surface_data(progressive, surfaceId, (void*) surface))
+		{
+			progressive_surface_context_free(surface);
+			return -1;
+		}
 	}
 
 	return 1;
 }
 
-int progressive_delete_surface_context(PROGRESSIVE_CONTEXT* progressive, UINT16 surfaceId)
+int progressive_delete_surface_context(PROGRESSIVE_CONTEXT* progressive,
+                                       UINT16 surfaceId)
 {
 	PROGRESSIVE_SURFACE_CONTEXT* surface;
-
-	surface = (PROGRESSIVE_SURFACE_CONTEXT*) progressive_get_surface_data(progressive, surfaceId);
+	surface = (PROGRESSIVE_SURFACE_CONTEXT *)progressive_get_surface_data(progressive, surfaceId);
 
 	if (surface)
 	{
@@ -358,27 +428,26 @@ int progressive_delete_surface_context(PROGRESSIVE_CONTEXT* progressive, UINT16 
  * LL3		4015		9x9		81
  */
 
-static void progressive_rfx_idwt_x(INT16* pLowBand, int nLowStep, INT16* pHighBand, int nHighStep,
-		INT16* pDstBand, int nDstStep, int nLowCount, int nHighCount, int nDstCount)
+static INLINE void progressive_rfx_idwt_x(INT16* pLowBand, int nLowStep,
+        INT16* pHighBand,
+        int nHighStep, INT16* pDstBand, int nDstStep,
+        int nLowCount, int nHighCount, int nDstCount)
 {
 	int i, j;
 	INT16 L0;
 	INT16 H0, H1;
 	INT16 X0, X1, X2;
-	INT16 *pL, *pH, *pX;
+	INT16* pL, *pH, *pX;
 
 	for (i = 0; i < nDstCount; i++)
 	{
 		pL = pLowBand;
 		pH = pHighBand;
 		pX = pDstBand;
-
 		H0 = *pH;
 		pH++;
-
 		L0 = *pL;
 		pL++;
-
 		X0 = L0 - H0;
 		X2 = L0 - H0;
 
@@ -386,17 +455,13 @@ static void progressive_rfx_idwt_x(INT16* pLowBand, int nLowStep, INT16* pHighBa
 		{
 			H1 = *pH;
 			pH++;
-
 			L0 = *pL;
 			pL++;
-
 			X2 = L0 - ((H0 + H1) / 2);
 			X1 = ((X0 + X2) / 2) + (2 * H0);
-
 			pX[0] = X0;
 			pX[1] = X1;
 			pX += 2;
-
 			X0 = X2;
 			H0 = H1;
 		}
@@ -412,9 +477,7 @@ static void progressive_rfx_idwt_x(INT16* pLowBand, int nLowStep, INT16* pHighBa
 			{
 				L0 = *pL;
 				pL++;
-
 				X0 = L0 - H0;
-
 				pX[0] = X2;
 				pX[1] = ((X0 + X2) / 2) + (2 * H0);
 				pX[2] = X0;
@@ -424,16 +487,12 @@ static void progressive_rfx_idwt_x(INT16* pLowBand, int nLowStep, INT16* pHighBa
 		{
 			L0 = *pL;
 			pL++;
-
 			X0 = L0 - (H0 / 2);
-
 			pX[0] = X2;
 			pX[1] = ((X0 + X2) / 2) + (2 * H0);
 			pX[2] = X0;
-
 			L0 = *pL;
 			pL++;
-
 			pX[3] = (X0 + L0) / 2;
 		}
 
@@ -443,27 +502,26 @@ static void progressive_rfx_idwt_x(INT16* pLowBand, int nLowStep, INT16* pHighBa
 	}
 }
 
-static void progressive_rfx_idwt_y(INT16* pLowBand, int nLowStep, INT16* pHighBand, int nHighStep,
-		INT16* pDstBand, int nDstStep, int nLowCount, int nHighCount, int nDstCount)
+static INLINE void progressive_rfx_idwt_y(INT16* pLowBand, int nLowStep,
+        INT16* pHighBand,
+        int nHighStep, INT16* pDstBand, int nDstStep,
+        int nLowCount, int nHighCount, int nDstCount)
 {
 	int i, j;
 	INT16 L0;
 	INT16 H0, H1;
 	INT16 X0, X1, X2;
-	INT16 *pL, *pH, *pX;
+	INT16* pL, *pH, *pX;
 
 	for (i = 0; i < nDstCount; i++)
 	{
 		pL = pLowBand;
 		pH = pHighBand;
 		pX = pDstBand;
-
 		H0 = *pH;
 		pH += nHighStep;
-
 		L0 = *pL;
 		pL += nLowStep;
-
 		X0 = L0 - H0;
 		X2 = L0 - H0;
 
@@ -471,19 +529,14 @@ static void progressive_rfx_idwt_y(INT16* pLowBand, int nLowStep, INT16* pHighBa
 		{
 			H1 = *pH;
 			pH += nHighStep;
-
 			L0 = *pL;
 			pL += nLowStep;
-
 			X2 = L0 - ((H0 + H1) / 2);
 			X1 = ((X0 + X2) / 2) + (2 * H0);
-
 			*pX = X0;
 			pX += nDstStep;
-
 			*pX = X1;
 			pX += nDstStep;
-
 			X0 = X2;
 			H0 = H1;
 		}
@@ -494,48 +547,32 @@ static void progressive_rfx_idwt_y(INT16* pLowBand, int nLowStep, INT16* pHighBa
 			{
 				*pX = X2;
 				pX += nDstStep;
-
 				*pX = X2 + (2 * H0);
-				pX += nDstStep;
 			}
 			else
 			{
 				L0 = *pL;
-				pL += nLowStep;
-
 				X0 = L0 - H0;
-
 				*pX = X2;
 				pX += nDstStep;
-
 				*pX = ((X0 + X2) / 2) + (2 * H0);
 				pX += nDstStep;
-
 				*pX = X0;
-				pX += nDstStep;
 			}
 		}
 		else
 		{
 			L0 = *pL;
 			pL += nLowStep;
-
 			X0 = L0 - (H0 / 2);
-
 			*pX = X2;
 			pX += nDstStep;
-
 			*pX = ((X0 + X2) / 2) + (2 * H0);
 			pX += nDstStep;
-
 			*pX = X0;
 			pX += nDstStep;
-
 			L0 = *pL;
-			pL += nLowStep;
-
 			*pX = (X0 + L0) / 2;
-			pX += nDstStep;
 		}
 
 		pLowBand++;
@@ -544,12 +581,12 @@ static void progressive_rfx_idwt_y(INT16* pLowBand, int nLowStep, INT16* pHighBa
 	}
 }
 
-static int progressive_rfx_get_band_l_count(int level)
+static INLINE int progressive_rfx_get_band_l_count(int level)
 {
 	return (64 >> level) + 1;
 }
 
-static int progressive_rfx_get_band_h_count(int level)
+static INLINE int progressive_rfx_get_band_h_count(int level)
 {
 	if (level == 1)
 		return (64 >> 1) - 1;
@@ -557,16 +594,17 @@ static int progressive_rfx_get_band_h_count(int level)
 		return (64 + (1 << (level - 1))) >> level;
 }
 
-static void progressive_rfx_dwt_2d_decode_block(INT16* buffer, INT16* temp, int level)
+static INLINE void progressive_rfx_dwt_2d_decode_block(INT16* buffer, INT16* temp,
+        int level)
 {
 	int offset;
 	int nBandL;
 	int nBandH;
 	int nDstStepX;
 	int nDstStepY;
-	INT16 *HL, *LH;
-	INT16 *HH, *LL;
-	INT16 *L, *H, *LLx;
+	INT16* HL, *LH;
+	INT16* HH, *LL;
+	INT16* L, *H, *LLx;
 	INT16* pLowBand[3];
 	INT16* pHighBand[3];
 	INT16* pDstBand[3];
@@ -576,39 +614,24 @@ static void progressive_rfx_dwt_2d_decode_block(INT16* buffer, INT16* temp, int 
 	int nLowCount[3];
 	int nHighCount[3];
 	int nDstCount[3];
-
 	nBandL = progressive_rfx_get_band_l_count(level);
 	nBandH = progressive_rfx_get_band_h_count(level);
-
 	offset = 0;
-
 	HL = &buffer[offset];
 	offset += (nBandH * nBandL);
-
 	LH = &buffer[offset];
 	offset += (nBandL * nBandH);
-
 	HH = &buffer[offset];
 	offset += (nBandH * nBandH);
-
 	LL = &buffer[offset];
-	offset += (nBandL * nBandL);
-
 	nDstStepX = (nBandL + nBandH);
 	nDstStepY = (nBandL + nBandH);
-
 	offset = 0;
-
 	L = &temp[offset];
 	offset += (nBandL * nDstStepX);
-
 	H = &temp[offset];
-	offset += (nBandH * nDstStepX);
-
 	LLx = &buffer[0];
-
 	/* horizontal (LL + HL -> L) */
-
 	pLowBand[0] = LL;
 	nLowStep[0] = nBandL;
 	pHighBand[0] = HL;
@@ -618,11 +641,9 @@ static void progressive_rfx_dwt_2d_decode_block(INT16* buffer, INT16* temp, int 
 	nLowCount[0] = nBandL;
 	nHighCount[0] = nBandH;
 	nDstCount[0] = nBandL;
-
-	progressive_rfx_idwt_x(pLowBand[0], nLowStep[0], pHighBand[0], nHighStep[0], pDstBand[0], nDstStep[0], nLowCount[0], nHighCount[0], nDstCount[0]);
-
+	progressive_rfx_idwt_x(pLowBand[0], nLowStep[0], pHighBand[0], nHighStep[0],
+	                       pDstBand[0], nDstStep[0], nLowCount[0], nHighCount[0], nDstCount[0]);
 	/* horizontal (LH + HH -> H) */
-
 	pLowBand[1] = LH;
 	nLowStep[1] = nBandL;
 	pHighBand[1] = HH;
@@ -632,11 +653,9 @@ static void progressive_rfx_dwt_2d_decode_block(INT16* buffer, INT16* temp, int 
 	nLowCount[1] = nBandL;
 	nHighCount[1] = nBandH;
 	nDstCount[1] = nBandH;
-
-	progressive_rfx_idwt_x(pLowBand[1], nLowStep[1], pHighBand[1], nHighStep[1], pDstBand[1], nDstStep[1], nLowCount[1], nHighCount[1], nDstCount[1]);
-
+	progressive_rfx_idwt_x(pLowBand[1], nLowStep[1], pHighBand[1], nHighStep[1],
+	                       pDstBand[1], nDstStep[1], nLowCount[1], nHighCount[1], nDstCount[1]);
 	/* vertical (L + H -> LL) */
-
 	pLowBand[2] = pDstBand[0];
 	nLowStep[2] = nDstStep[0];
 	pHighBand[2] = pDstBand[1];
@@ -646,11 +665,12 @@ static void progressive_rfx_dwt_2d_decode_block(INT16* buffer, INT16* temp, int 
 	nLowCount[2] = nBandL;
 	nHighCount[2] = nBandH;
 	nDstCount[2] = nBandL + nBandH;
-
-	progressive_rfx_idwt_y(pLowBand[2], nLowStep[2], pHighBand[2], nHighStep[2], pDstBand[2], nDstStep[2], nLowCount[2], nHighCount[2], nDstCount[2]);
+	progressive_rfx_idwt_y(pLowBand[2], nLowStep[2], pHighBand[2], nHighStep[2],
+	                       pDstBand[2], nDstStep[2], nLowCount[2], nHighCount[2], nDstCount[2]);
 }
 
-void progressive_rfx_dwt_2d_decode(INT16* buffer, INT16* temp, INT16* current, INT16* sign, BOOL diff)
+static INLINE void progressive_rfx_dwt_2d_decode(INT16* buffer, INT16* temp,
+        INT16* current, INT16* sign, BOOL diff)
 {
 	const primitives_t* prims = primitives_get();
 
@@ -658,13 +678,14 @@ void progressive_rfx_dwt_2d_decode(INT16* buffer, INT16* temp, INT16* current, I
 		prims->add_16s(buffer, current, buffer, 4096);
 
 	CopyMemory(current, buffer, 4096 * 2);
-
 	progressive_rfx_dwt_2d_decode_block(&buffer[3807], temp, 3);
 	progressive_rfx_dwt_2d_decode_block(&buffer[3007], temp, 2);
 	progressive_rfx_dwt_2d_decode_block(&buffer[0], temp, 1);
 }
 
-void progressive_rfx_decode_block(const primitives_t* prims, INT16* buffer, int length, UINT32 shift)
+static INLINE void progressive_rfx_decode_block(const primitives_t* prims,
+        INT16* buffer,
+        int length, UINT32 shift)
 {
 	if (!shift)
 		return;
@@ -672,22 +693,22 @@ void progressive_rfx_decode_block(const primitives_t* prims, INT16* buffer, int 
 	prims->lShiftC_16s(buffer, shift, buffer, length);
 }
 
-int progressive_rfx_decode_component(PROGRESSIVE_CONTEXT* progressive, RFX_COMPONENT_CODEC_QUANT* shift,
-		const BYTE* data, int length, INT16* buffer, INT16* current, INT16* sign, BOOL diff)
+static INLINE int progressive_rfx_decode_component(PROGRESSIVE_CONTEXT* progressive,
+        RFX_COMPONENT_CODEC_QUANT* shift,
+        const BYTE* data, int length,
+        INT16* buffer, INT16* current,
+        INT16* sign, BOOL diff)
 {
 	int status;
 	INT16* temp;
 	const primitives_t* prims = primitives_get();
-
-	status = rfx_rlgr_decode(data, length, buffer, 4096, 1);
+	status = rfx_rlgr_decode(RLGR1, data, length, buffer, 4096);
 
 	if (status < 0)
 		return status;
 
 	CopyMemory(sign, buffer, 4096 * 2);
-
 	rfx_differential_decode(&buffer[4015], 81); /* LL3 */
-
 	progressive_rfx_decode_block(prims, &buffer[0], 1023, shift->HL1); /* HL1 */
 	progressive_rfx_decode_block(prims, &buffer[1023], 1023, shift->LH1); /* LH1 */
 	progressive_rfx_decode_block(prims, &buffer[2046], 961, shift->HH1); /* HH1 */
@@ -698,17 +719,14 @@ int progressive_rfx_decode_component(PROGRESSIVE_CONTEXT* progressive, RFX_COMPO
 	progressive_rfx_decode_block(prims, &buffer[3879], 72, shift->LH3); /* LH3 */
 	progressive_rfx_decode_block(prims, &buffer[3951], 64, shift->HH3); /* HH3 */
 	progressive_rfx_decode_block(prims, &buffer[4015], 81, shift->LL3); /* LL3 */
-
 	temp = (INT16*) BufferPool_Take(progressive->bufferPool, -1); /* DWT buffer */
-
 	progressive_rfx_dwt_2d_decode(buffer, temp, current, sign, diff);
-
 	BufferPool_Return(progressive->bufferPool, temp);
-
 	return 1;
 }
 
-int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive, RFX_PROGRESSIVE_TILE* tile)
+static INLINE int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive,
+        RFX_PROGRESSIVE_TILE* tile)
 {
 	BOOL diff;
 	BYTE* pBuffer;
@@ -730,13 +748,13 @@ int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive, RFX_PROG
 	const primitives_t* prims = primitives_get();
 
 	tile->pass = 1;
-
 	diff = tile->flags & RFX_TILE_DIFFERENCE;
-
-	WLog_DBG(TAG, "ProgressiveTile%s: quantIdx Y: %d Cb: %d Cr: %d xIdx: %d yIdx: %d flags: 0x%02X quality: %d yLen: %d cbLen: %d crLen: %d tailLen: %d",
-			(tile->blockType == PROGRESSIVE_WBT_TILE_FIRST) ? "First" : "Simple",
-			tile->quantIdxY, tile->quantIdxCb, tile->quantIdxCr, tile->xIdx, tile->yIdx, tile->flags, tile->quality, tile->yLen, tile->cbLen, tile->crLen, tile->tailLen);
-
+	WLog_Print(progressive->log, WLOG_DEBUG,
+	           "ProgressiveTile%s: quantIdx Y: %"PRIu8" Cb: %"PRIu8" Cr: %"PRIu8" xIdx: %"PRIu16" yIdx: %"PRIu16" flags: 0x%02"PRIX8" quality: %"PRIu8" yLen: %"PRIu16" cbLen: %"PRIu16" crLen: %"PRIu16" tailLen: %"PRIu16"",
+	           (tile->blockType == PROGRESSIVE_WBT_TILE_FIRST) ? "First" : "Simple",
+	           tile->quantIdxY, tile->quantIdxCb, tile->quantIdxCr,
+	           tile->xIdx, tile->yIdx, tile->flags, tile->quality, tile->yLen,
+	           tile->cbLen, tile->crLen, tile->tailLen);
 	region = &(progressive->region);
 
 	if (tile->quantIdxY >= region->numQuant)
@@ -773,7 +791,6 @@ int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive, RFX_PROG
 	CopyMemory(&(tile->yQuant), quantY, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->cbQuant), quantCb, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->crQuant), quantCr, sizeof(RFX_COMPONENT_CODEC_QUANT));
-
 	CopyMemory(&(tile->yProgQuant), quantProgY, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->cbProgQuant), quantProgCb, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->crProgQuant), quantProgCr, sizeof(RFX_COMPONENT_CODEC_QUANT));
@@ -781,7 +798,6 @@ int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive, RFX_PROG
 	progressive_rfx_quant_add(quantY, quantProgY, &(tile->yBitPos));
 	progressive_rfx_quant_add(quantCb, quantProgCb, &(tile->cbBitPos));
 	progressive_rfx_quant_add(quantCr, quantProgCr, &(tile->crBitPos));
-
 	progressive_rfx_quant_add(quantY, quantProgY, &shiftY);
 	progressive_rfx_quant_lsub(&shiftY, 1); /* -6 + 5 = -1 */
 	progressive_rfx_quant_add(quantCb, quantProgCb, &shiftCb);
@@ -792,16 +808,22 @@ int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive, RFX_PROG
 	if (!tile->data)
 	{
 		tile->data = (BYTE*) _aligned_malloc(64 * 64 * 4, 16);
+		if (!tile->data)
+			return -1;
 	}
 
 	if (!tile->sign)
 	{
 		tile->sign = (BYTE*) _aligned_malloc((8192 + 32) * 3, 16);
+		if (!tile->sign)
+			return -1;
 	}
 
 	if (!tile->current)
 	{
 		tile->current = (BYTE*) _aligned_malloc((8192 + 32) * 3, 16);
+		if (!tile->current)
+			return -1;
 	}
 
 	pBuffer = tile->sign;
@@ -819,35 +841,21 @@ int progressive_decompress_tile_first(PROGRESSIVE_CONTEXT* progressive, RFX_PROG
 	pSrcDst[1] = (INT16*)((BYTE*)(&pBuffer[((8192 + 32) * 1) + 16])); /* Cb/G buffer */
 	pSrcDst[2] = (INT16*)((BYTE*)(&pBuffer[((8192 + 32) * 2) + 16])); /* Cr/B buffer */
 
-	progressive_rfx_decode_component(progressive, &shiftY, tile->yData, tile->yLen, pSrcDst[0], pCurrent[0], pSign[0], diff); /* Y */
-	progressive_rfx_decode_component(progressive, &shiftCb, tile->cbData, tile->cbLen, pSrcDst[1], pCurrent[1], pSign[1], diff); /* Cb */
-	progressive_rfx_decode_component(progressive, &shiftCr, tile->crData, tile->crLen, pSrcDst[2], pCurrent[2], pSign[2], diff); /* Cr */
+	progressive_rfx_decode_component(progressive, &shiftY, tile->yData, tile->yLen,
+	                                 pSrcDst[0], pCurrent[0], pSign[0], diff); /* Y */
+	progressive_rfx_decode_component(progressive, &shiftCb, tile->cbData, tile->cbLen,
+	                                 pSrcDst[1], pCurrent[1], pSign[1], diff); /* Cb */
+	progressive_rfx_decode_component(progressive, &shiftCr, tile->crData, tile->crLen,
+	                                 pSrcDst[2], pCurrent[2], pSign[2], diff); /* Cr */
 
-	if (!progressive->invert)
-		prims->yCbCrToRGB_16s8u_P3AC4R((const INT16**) pSrcDst, 64 * 2, tile->data, 64 * 4, &roi_64x64);
-	else
-		prims->yCbCrToBGR_16s8u_P3AC4R((const INT16**) pSrcDst, 64 * 2, tile->data, 64 * 4, &roi_64x64);
-
+	prims->yCbCrToRGB_16s8u_P3AC4R((const INT16**) pSrcDst, 64 * 2, tile->data, tile->stride,
+								tile->format, &roi_64x64);
 	BufferPool_Return(progressive->bufferPool, pBuffer);
-
 	return 1;
 }
 
-struct _RFX_PROGRESSIVE_UPGRADE_STATE
-{
-	BOOL nonLL;
-	wBitStream* srl;
-	wBitStream* raw;
-
-	/* SRL state */
-
-	int kp;
-	int nz;
-	BOOL mode;
-};
-typedef struct _RFX_PROGRESSIVE_UPGRADE_STATE RFX_PROGRESSIVE_UPGRADE_STATE;
-
-INT16 progressive_rfx_srl_read(RFX_PROGRESSIVE_UPGRADE_STATE* state, UINT32 numBits)
+static INLINE INT16 progressive_rfx_srl_read(RFX_PROGRESSIVE_UPGRADE_STATE* state,
+        UINT32 numBits)
 {
 	int k;
 	UINT32 bit;
@@ -867,16 +875,13 @@ INT16 progressive_rfx_srl_read(RFX_PROGRESSIVE_UPGRADE_STATE* state, UINT32 numB
 	if (!state->mode)
 	{
 		/* zero encoding */
-
 		bit = (bs->accumulator & 0x80000000) ? 1 : 0;
 		BitStream_Shift(bs, 1);
 
 		if (!bit)
 		{
 			/* '0' bit, nz >= (1 << k), nz = (1 << k) */
-
 			state->nz = (1 << k);
-
 			state->kp += 4;
 
 			if (state->kp > 80)
@@ -888,7 +893,6 @@ INT16 progressive_rfx_srl_read(RFX_PROGRESSIVE_UPGRADE_STATE* state, UINT32 numB
 		else
 		{
 			/* '1' bit, nz < (1 << k), nz = next k bits */
-
 			state->nz = 0;
 			state->mode = 1; /* unary encoding is next */
 
@@ -908,14 +912,10 @@ INT16 progressive_rfx_srl_read(RFX_PROGRESSIVE_UPGRADE_STATE* state, UINT32 numB
 	}
 
 	state->mode = 0; /* zero encoding is next */
-
 	/* unary encoding */
-
 	/* read sign bit */
-
 	sign = (bs->accumulator & 0x80000000) ? 1 : 0;
 	BitStream_Shift(bs, 1);
-
 	state->kp -= 6;
 
 	if (state->kp < 0)
@@ -941,17 +941,14 @@ INT16 progressive_rfx_srl_read(RFX_PROGRESSIVE_UPGRADE_STATE* state, UINT32 numB
 	return sign ? -1 * mag : mag;
 }
 
-int progressive_rfx_upgrade_state_finish(RFX_PROGRESSIVE_UPGRADE_STATE* state)
+static INLINE int progressive_rfx_upgrade_state_finish(RFX_PROGRESSIVE_UPGRADE_STATE* state)
 {
 	int pad;
 	wBitStream* srl;
 	wBitStream* raw;
-
 	srl = state->srl;
 	raw = state->raw;
-
 	/* Read trailing bits from RAW/SRL bit streams */
-
 	pad = (raw->position % 8) ? (8 - (raw->position % 8)) : 0;
 
 	if (pad)
@@ -968,18 +965,17 @@ int progressive_rfx_upgrade_state_finish(RFX_PROGRESSIVE_UPGRADE_STATE* state)
 	return 1;
 }
 
-int progressive_rfx_upgrade_block(RFX_PROGRESSIVE_UPGRADE_STATE* state, INT16* buffer,
-		INT16* sign, int length, UINT32 shift, UINT32 bitPos, UINT32 numBits)
+static INLINE int progressive_rfx_upgrade_block(RFX_PROGRESSIVE_UPGRADE_STATE* state,
+        INT16* buffer,	INT16* sign, UINT32 length,
+        UINT32 shift, UINT32 bitPos, UINT32 numBits)
 {
 	int index;
 	INT16 input;
-	wBitStream* srl;
 	wBitStream* raw;
 
 	if (!numBits)
 		return 1;
 
-	srl = state->srl;
 	raw = state->raw;
 
 	if (!state->nonLL)
@@ -987,9 +983,8 @@ int progressive_rfx_upgrade_block(RFX_PROGRESSIVE_UPGRADE_STATE* state, INT16* b
 		for (index = 0; index < length; index++)
 		{
 			raw->mask = ((1 << numBits) - 1);
-			input = (INT16) ((raw->accumulator >> (32 - numBits)) & raw->mask);
+			input = (INT16)((raw->accumulator >> (32 - numBits)) & raw->mask);
 			BitStream_Shift(raw, numBits);
-
 			buffer[index] += (input << shift);
 		}
 
@@ -1001,27 +996,22 @@ int progressive_rfx_upgrade_block(RFX_PROGRESSIVE_UPGRADE_STATE* state, INT16* b
 		if (sign[index] > 0)
 		{
 			/* sign > 0, read from raw */
-
 			raw->mask = ((1 << numBits) - 1);
-			input = (INT16) ((raw->accumulator >> (32 - numBits)) & raw->mask);
+			input = (INT16)((raw->accumulator >> (32 - numBits)) & raw->mask);
 			BitStream_Shift(raw, numBits);
 		}
 		else if (sign[index] < 0)
 		{
 			/* sign < 0, read from raw */
-
 			raw->mask = ((1 << numBits) - 1);
-			input = (INT16) ((raw->accumulator >> (32 - numBits)) & raw->mask);
+			input = (INT16)((raw->accumulator >> (32 - numBits)) & raw->mask);
 			BitStream_Shift(raw, numBits);
-
 			input *= -1;
 		}
 		else
 		{
 			/* sign == 0, read from srl */
-
 			input = progressive_rfx_srl_read(state, numBits);
-
 			sign[index] = input;
 		}
 
@@ -1031,13 +1021,19 @@ int progressive_rfx_upgrade_block(RFX_PROGRESSIVE_UPGRADE_STATE* state, INT16* b
 	return 1;
 }
 
-int progressive_rfx_upgrade_component(PROGRESSIVE_CONTEXT* progressive, RFX_COMPONENT_CODEC_QUANT* shift,
-		RFX_COMPONENT_CODEC_QUANT* bitPos, RFX_COMPONENT_CODEC_QUANT* numBits, INT16* buffer,
-		INT16* current, INT16* sign, const BYTE* srlData, int srlLen, const BYTE* rawData, int rawLen)
+static INLINE int progressive_rfx_upgrade_component(PROGRESSIVE_CONTEXT* progressive,
+        RFX_COMPONENT_CODEC_QUANT* shift,
+        RFX_COMPONENT_CODEC_QUANT* bitPos,
+        RFX_COMPONENT_CODEC_QUANT* numBits,
+        INT16* buffer,
+        INT16* current, INT16* sign,
+        const BYTE* srlData,
+        UINT32 srlLen, const BYTE* rawData,
+        UINT32 rawLen)
 {
 	INT16* temp;
-	int aRawLen;
-	int aSrlLen;
+	UINT32 aRawLen;
+	UINT32 aSrlLen;
 	wBitStream s_srl;
 	wBitStream s_raw;
 	RFX_PROGRESSIVE_UPGRADE_STATE state;
@@ -1045,33 +1041,39 @@ int progressive_rfx_upgrade_component(PROGRESSIVE_CONTEXT* progressive, RFX_COMP
 	ZeroMemory(&s_srl, sizeof(wBitStream));
 	ZeroMemory(&s_raw, sizeof(wBitStream));
 	ZeroMemory(&state, sizeof(RFX_PROGRESSIVE_UPGRADE_STATE));
-
 	state.kp = 8;
 	state.mode = 0;
 	state.srl = &s_srl;
 	state.raw = &s_raw;
-
 	BitStream_Attach(state.srl, srlData, srlLen);
 	BitStream_Fetch(state.srl);
-
 	BitStream_Attach(state.raw, rawData, rawLen);
 	BitStream_Fetch(state.raw);
 
 	state.nonLL = TRUE;
-	progressive_rfx_upgrade_block(&state, &current[0], &sign[0], 1023, shift->HL1, bitPos->HL1, numBits->HL1); /* HL1 */
-	progressive_rfx_upgrade_block(&state, &current[1023], &sign[1023], 1023, shift->LH1, bitPos->LH1, numBits->LH1); /* LH1 */
-	progressive_rfx_upgrade_block(&state, &current[2046], &sign[2046], 961, shift->HH1, bitPos->HH1, numBits->HH1); /* HH1 */
-	progressive_rfx_upgrade_block(&state, &current[3007], &sign[3007], 272, shift->HL2, bitPos->HL2, numBits->HL2); /* HL2 */
-	progressive_rfx_upgrade_block(&state, &current[3279], &sign[3279], 272, shift->LH2, bitPos->LH2, numBits->LH2); /* LH2 */
-	progressive_rfx_upgrade_block(&state, &current[3551], &sign[3551], 256, shift->HH2, bitPos->HH2, numBits->HH2); /* HH2 */
-	progressive_rfx_upgrade_block(&state, &current[3807], &sign[3807], 72, shift->HL3, bitPos->HL3, numBits->HL3); /* HL3 */
-	progressive_rfx_upgrade_block(&state, &current[3879], &sign[3879], 72, shift->LH3, bitPos->LH3, numBits->LH3); /* LH3 */
-	progressive_rfx_upgrade_block(&state, &current[3951], &sign[3951], 64, shift->HH3, bitPos->HH3, numBits->HH3); /* HH3 */
+	progressive_rfx_upgrade_block(&state, &current[0], &sign[0], 1023, shift->HL1,
+	                              bitPos->HL1, numBits->HL1); /* HL1 */
+	progressive_rfx_upgrade_block(&state, &current[1023], &sign[1023], 1023,
+	                              shift->LH1, bitPos->LH1, numBits->LH1); /* LH1 */
+	progressive_rfx_upgrade_block(&state, &current[2046], &sign[2046], 961,
+	                              shift->HH1, bitPos->HH1, numBits->HH1); /* HH1 */
+	progressive_rfx_upgrade_block(&state, &current[3007], &sign[3007], 272,
+	                              shift->HL2, bitPos->HL2, numBits->HL2); /* HL2 */
+	progressive_rfx_upgrade_block(&state, &current[3279], &sign[3279], 272,
+	                              shift->LH2, bitPos->LH2, numBits->LH2); /* LH2 */
+	progressive_rfx_upgrade_block(&state, &current[3551], &sign[3551], 256,
+	                              shift->HH2, bitPos->HH2, numBits->HH2); /* HH2 */
+	progressive_rfx_upgrade_block(&state, &current[3807], &sign[3807], 72,
+	                              shift->HL3, bitPos->HL3, numBits->HL3); /* HL3 */
+	progressive_rfx_upgrade_block(&state, &current[3879], &sign[3879], 72,
+	                              shift->LH3, bitPos->LH3, numBits->LH3); /* LH3 */
+	progressive_rfx_upgrade_block(&state, &current[3951], &sign[3951], 64,
+	                              shift->HH3, bitPos->HH3, numBits->HH3); /* HH3 */
 
 	state.nonLL = FALSE;
-	progressive_rfx_upgrade_block(&state, &current[4015], &sign[4015], 81, shift->LL3, bitPos->LL3, numBits->LL3); /* LL3 */
+	progressive_rfx_upgrade_block(&state, &current[4015], &sign[4015], 81,
+	                              shift->LL3, bitPos->LL3, numBits->LL3); /* LL3 */
 	progressive_rfx_upgrade_state_finish(&state);
-
 	aRawLen = (state.raw->position + 7) / 8;
 	aSrlLen = (state.srl->position + 7) / 8;
 
@@ -1081,34 +1083,31 @@ int progressive_rfx_upgrade_component(PROGRESSIVE_CONTEXT* progressive, RFX_COMP
 		int pSrlLen = 0;
 
 		if (rawLen)
-			pRawLen = (int) ((((float) aRawLen) / ((float) rawLen)) * 100.0f);
+			pRawLen = (int)((((float) aRawLen) / ((float) rawLen)) * 100.0f);
 
 		if (srlLen)
-			pSrlLen = (int) ((((float) aSrlLen) / ((float) srlLen)) * 100.0f);
+			pSrlLen = (int)((((float) aSrlLen) / ((float) srlLen)) * 100.0f);
 
-		WLog_INFO(TAG, "RAW: %d/%d %d%% (%d/%d:%d)\tSRL: %d/%d %d%% (%d/%d:%d)",
-			aRawLen, rawLen, pRawLen, state.raw->position, rawLen * 8,
-			(rawLen * 8) - state.raw->position,
-			aSrlLen, srlLen, pSrlLen, state.srl->position, srlLen * 8,
-			(srlLen * 8) - state.srl->position);
-
+		WLog_Print(progressive->log, WLOG_INFO,
+		           "RAW: %"PRIu32"/%"PRIu32" %d%% (%"PRIu32"/%"PRIu32":%"PRIu32")\tSRL: %"PRIu32"/%"PRIu32" %d%% (%"PRIu32"/%"PRIu32":%"PRIu32")",
+		           aRawLen, rawLen, pRawLen, state.raw->position, rawLen * 8,
+		           (rawLen * 8) - state.raw->position,
+		           aSrlLen, srlLen, pSrlLen, state.srl->position, srlLen * 8,
+		           (srlLen * 8) - state.srl->position);
 		return -1;
 	}
 
 	temp = (INT16*) BufferPool_Take(progressive->bufferPool, -1); /* DWT buffer */
-
 	CopyMemory(buffer, current, 4096 * 2);
-
 	progressive_rfx_dwt_2d_decode_block(&buffer[3807], temp, 3);
 	progressive_rfx_dwt_2d_decode_block(&buffer[3007], temp, 2);
 	progressive_rfx_dwt_2d_decode_block(&buffer[0], temp, 1);
-
 	BufferPool_Return(progressive->bufferPool, temp);
-
 	return 1;
 }
 
-int progressive_decompress_tile_upgrade(PROGRESSIVE_CONTEXT* progressive, RFX_PROGRESSIVE_TILE* tile)
+static INLINE int progressive_decompress_tile_upgrade(PROGRESSIVE_CONTEXT* progressive,
+        RFX_PROGRESSIVE_TILE* tile)
 {
 	int status;
 	BYTE* pBuffer;
@@ -1134,12 +1133,12 @@ int progressive_decompress_tile_upgrade(PROGRESSIVE_CONTEXT* progressive, RFX_PR
 	RFX_PROGRESSIVE_CODEC_QUANT* quantProg;
 	static const prim_size_t roi_64x64 = { 64, 64 };
 	const primitives_t* prims = primitives_get();
-
 	tile->pass++;
-
-	WLog_DBG(TAG, "ProgressiveTileUpgrade: pass: %d quantIdx Y: %d Cb: %d Cr: %d xIdx: %d yIdx: %d quality: %d ySrlLen: %d yRawLen: %d cbSrlLen: %d cbRawLen: %d crSrlLen: %d crRawLen: %d",
-			tile->pass, tile->quantIdxY, tile->quantIdxCb, tile->quantIdxCr, tile->xIdx, tile->yIdx, tile->quality, tile->ySrlLen, tile->yRawLen, tile->cbSrlLen, tile->cbRawLen, tile->crSrlLen, tile->crRawLen);
-
+	WLog_Print(progressive->log, WLOG_DEBUG,
+	           "ProgressiveTileUpgrade: pass: %"PRIu16" quantIdx Y: %"PRIu8" Cb: %"PRIu8" Cr: %"PRIu8" xIdx: %"PRIu16" yIdx: %"PRIu16" quality: %"PRIu8" ySrlLen: %"PRIu16" yRawLen: %"PRIu16" cbSrlLen: %"PRIu16" cbRawLen: %"PRIu16" crSrlLen: %"PRIu16" crRawLen: %"PRIu16"",
+	           tile->pass, tile->quantIdxY, tile->quantIdxCb, tile->quantIdxCr, tile->xIdx,
+	           tile->yIdx, tile->quality, tile->ySrlLen, tile->yRawLen, tile->cbSrlLen,
+	           tile->cbRawLen, tile->crSrlLen, tile->crRawLen);
 	region = &(progressive->region);
 
 	if (tile->quantIdxY >= region->numQuant)
@@ -1174,20 +1173,20 @@ int progressive_decompress_tile_upgrade(PROGRESSIVE_CONTEXT* progressive, RFX_PR
 	quantProgCr = &(quantProg->crQuantValues);
 
 	if (!progressive_rfx_quant_cmp_equal(quantY, &(tile->yQuant)))
-		WLog_WARN(TAG, "non-progressive quantY has changed!");
+		WLog_Print(progressive->log, WLOG_WARN, "non-progressive quantY has changed!");
+
 	if (!progressive_rfx_quant_cmp_equal(quantCb, &(tile->cbQuant)))
-		WLog_WARN(TAG, "non-progressive quantCb has changed!");
+		WLog_Print(progressive->log, WLOG_WARN, "non-progressive quantCb has changed!");
+
 	if (!progressive_rfx_quant_cmp_equal(quantCr, &(tile->crQuant)))
-		WLog_WARN(TAG, "non-progressive quantCr has changed!");
+		WLog_Print(progressive->log, WLOG_WARN, "non-progressive quantCr has changed!");
 
 	progressive_rfx_quant_add(quantY, quantProgY, &yBitPos);
 	progressive_rfx_quant_add(quantCb, quantProgCb, &cbBitPos);
 	progressive_rfx_quant_add(quantCr, quantProgCr, &crBitPos);
-
 	progressive_rfx_quant_sub(&(tile->yBitPos), &yBitPos, &yNumBits);
 	progressive_rfx_quant_sub(&(tile->cbBitPos), &cbBitPos, &cbNumBits);
 	progressive_rfx_quant_sub(&(tile->crBitPos), &crBitPos, &crNumBits);
-
 	progressive_rfx_quant_add(quantY, quantProgY, &shiftY);
 	progressive_rfx_quant_lsub(&shiftY, 1); /* -6 + 5 = -1 */
 	progressive_rfx_quant_add(quantCb, quantProgCb, &shiftCb);
@@ -1198,11 +1197,9 @@ int progressive_decompress_tile_upgrade(PROGRESSIVE_CONTEXT* progressive, RFX_PR
 	CopyMemory(&(tile->yBitPos), &yBitPos, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->cbBitPos), &cbBitPos, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->crBitPos), &crBitPos, sizeof(RFX_COMPONENT_CODEC_QUANT));
-
 	CopyMemory(&(tile->yQuant), quantY, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->cbQuant), quantCb, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->crQuant), quantCr, sizeof(RFX_COMPONENT_CODEC_QUANT));
-
 	CopyMemory(&(tile->yProgQuant), quantProgY, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->cbProgQuant), quantProgCb, sizeof(RFX_COMPONENT_CODEC_QUANT));
 	CopyMemory(&(tile->crProgQuant), quantProgCr, sizeof(RFX_COMPONENT_CODEC_QUANT));
@@ -1222,38 +1219,43 @@ int progressive_decompress_tile_upgrade(PROGRESSIVE_CONTEXT* progressive, RFX_PR
 	pSrcDst[1] = (INT16*)((BYTE*)(&pBuffer[((8192 + 32) * 1) + 16])); /* Cb/G buffer */
 	pSrcDst[2] = (INT16*)((BYTE*)(&pBuffer[((8192 + 32) * 2) + 16])); /* Cr/B buffer */
 
-	status = progressive_rfx_upgrade_component(progressive, &shiftY, quantProgY, &yNumBits,
-			pSrcDst[0], pCurrent[0], pSign[0], tile->ySrlData, tile->ySrlLen, tile->yRawData, tile->yRawLen); /* Y */
+	status = progressive_rfx_upgrade_component(progressive, &shiftY, quantProgY,
+	         &yNumBits,
+	         pSrcDst[0], pCurrent[0], pSign[0], tile->ySrlData, tile->ySrlLen,
+	         tile->yRawData, tile->yRawLen); /* Y */
 
 	if (status < 0)
 		return -1;
 
-	status = progressive_rfx_upgrade_component(progressive, &shiftCb, quantProgCb, &cbNumBits,
-			pSrcDst[1], pCurrent[1], pSign[1], tile->cbSrlData, tile->cbSrlLen, tile->cbRawData, tile->cbRawLen); /* Cb */
+	status = progressive_rfx_upgrade_component(progressive, &shiftCb, quantProgCb,
+	         &cbNumBits,
+	         pSrcDst[1], pCurrent[1], pSign[1], tile->cbSrlData, tile->cbSrlLen,
+	         tile->cbRawData, tile->cbRawLen); /* Cb */
 
 	if (status < 0)
 		return -1;
 
-	status = progressive_rfx_upgrade_component(progressive, &shiftCr, quantProgCr, &crNumBits,
-			pSrcDst[2], pCurrent[2], pSign[2], tile->crSrlData, tile->crSrlLen, tile->crRawData, tile->crRawLen); /* Cr */
+	status = progressive_rfx_upgrade_component(progressive, &shiftCr, quantProgCr,
+	         &crNumBits,
+	         pSrcDst[2], pCurrent[2], pSign[2], tile->crSrlData, tile->crSrlLen,
+	         tile->crRawData, tile->crRawLen); /* Cr */
 
 	if (status < 0)
 		return -1;
 
-	if (!progressive->invert)
-		prims->yCbCrToRGB_16s8u_P3AC4R((const INT16**) pSrcDst, 64 * 2, tile->data, 64 * 4, &roi_64x64);
-	else
-		prims->yCbCrToBGR_16s8u_P3AC4R((const INT16**) pSrcDst, 64 * 2, tile->data, 64 * 4, &roi_64x64);
-
+	prims->yCbCrToRGB_16s8u_P3AC4R((const INT16**) pSrcDst, 64 * 2,
+	                               tile->data, tile->stride, tile->format,
+	                               &roi_64x64);
 	BufferPool_Return(progressive->bufferPool, pBuffer);
-
 	return 1;
 }
 
-int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UINT32 blocksLen, PROGRESSIVE_SURFACE_CONTEXT* surface)
+static INLINE int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive,
+        const BYTE* blocks, UINT32 blocksLen,
+        const PROGRESSIVE_SURFACE_CONTEXT* surface)
 {
 	int status = -1;
-	BYTE* block;
+	const BYTE* block;
 	UINT16 xIdx;
 	UINT16 yIdx;
 	UINT16 zIdx;
@@ -1266,21 +1268,17 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 	RFX_PROGRESSIVE_TILE* tile;
 	RFX_PROGRESSIVE_TILE** tiles;
 	PROGRESSIVE_BLOCK_REGION* region;
-
 	region = &(progressive->region);
-
 	tiles = region->tiles;
 
 	while ((blocksLen - offset) >= 6)
 	{
 		boffset = 0;
 		block = &blocks[offset];
-
 		blockType = *((UINT16*) &block[boffset + 0]); /* blockType (2 bytes) */
 		blockLen = *((UINT32*) &block[boffset + 2]); /* blockLen (4 bytes) */
 		boffset += 6;
-
-		//WLog_DBG(TAG, "%s", progressive_get_block_type_string(blockType));
+		WLog_Print(progressive->log, WLOG_DEBUG, "%s", progressive_get_block_type_string(blockType));
 
 		if ((blocksLen - offset) < blockLen)
 			return -1003;
@@ -1288,25 +1286,20 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 		switch (blockType)
 		{
 			case PROGRESSIVE_WBT_TILE_SIMPLE:
-
 				if ((blockLen - boffset) < 16)
 					return -1022;
 
 				xIdx = *((UINT16*) &block[boffset + 3]); /* xIdx (2 bytes) */
 				yIdx = *((UINT16*) &block[boffset + 5]); /* yIdx (2 bytes) */
-
 				zIdx = (yIdx * surface->gridWidth) + xIdx;
 
 				if (zIdx >= surface->gridSize)
 					return -1;
 
 				tiles[count] = tile = &(surface->tiles[zIdx]);
-
 				tile->blockType = blockType;
 				tile->blockLen = blockLen;
-
 				tile->quality = 0xFF; /* simple tiles use no progressive techniques */
-
 				tile->quantIdxY = block[boffset + 0]; /* quantIdxY (1 byte) */
 				tile->quantIdxCb = block[boffset + 1]; /* quantIdxCb (1 byte) */
 				tile->quantIdxCr = block[boffset + 2]; /* quantIdxCr (1 byte) */
@@ -1342,34 +1335,29 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 
 				tile->tailData = &block[boffset];
 				boffset += tile->tailLen;
-
 				tile->width = 64;
 				tile->height = 64;
 				tile->x = tile->xIdx * 64;
 				tile->y = tile->yIdx * 64;
-
+				tile->format = progressive->format;
+				tile->stride = GetBytesPerPixel(tile->format) * tile->width;
 				tile->flags &= 1;
-
 				break;
 
 			case PROGRESSIVE_WBT_TILE_FIRST:
-
 				if ((blockLen - boffset) < 17)
 					return -1027;
 
 				xIdx = *((UINT16*) &block[boffset + 3]); /* xIdx (2 bytes) */
 				yIdx = *((UINT16*) &block[boffset + 5]); /* yIdx (2 bytes) */
-
 				zIdx = (yIdx * surface->gridWidth) + xIdx;
 
 				if (zIdx >= surface->gridSize)
 					return -1;
 
 				tiles[count] = tile = &(surface->tiles[zIdx]);
-
 				tile->blockType = blockType;
 				tile->blockLen = blockLen;
-
 				tile->quantIdxY = block[boffset + 0]; /* quantIdxY (1 byte) */
 				tile->quantIdxCb = block[boffset + 1]; /* quantIdxCb (1 byte) */
 				tile->quantIdxCr = block[boffset + 2]; /* quantIdxCr (1 byte) */
@@ -1406,34 +1394,29 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 
 				tile->tailData = &block[boffset];
 				boffset += tile->tailLen;
-
 				tile->width = 64;
 				tile->height = 64;
 				tile->x = tile->xIdx * 64;
 				tile->y = tile->yIdx * 64;
-
+				tile->format = progressive->format;
+				tile->stride = GetBytesPerPixel(tile->format) * tile->width;
 				break;
 
 			case PROGRESSIVE_WBT_TILE_UPGRADE:
-
 				if ((blockLen - boffset) < 20)
 					return -1032;
 
 				xIdx = *((UINT16*) &block[boffset + 3]); /* xIdx (2 bytes) */
 				yIdx = *((UINT16*) &block[boffset + 5]); /* yIdx (2 bytes) */
-
 				zIdx = (yIdx * surface->gridWidth) + xIdx;
 
 				if (zIdx >= surface->gridSize)
 					return -1;
 
 				tiles[count] = tile = &(surface->tiles[zIdx]);
-
 				tile->blockType = blockType;
 				tile->blockLen = blockLen;
-
 				tile->flags = 0;
-
 				tile->quantIdxY = block[boffset + 0]; /* quantIdxY (1 byte) */
 				tile->quantIdxCb = block[boffset + 1]; /* quantIdxCb (1 byte) */
 				tile->quantIdxCr = block[boffset + 2]; /* quantIdxCr (1 byte) */
@@ -1483,17 +1466,16 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 
 				tile->crRawData = &block[boffset];
 				boffset += tile->crRawLen;
-
 				tile->width = 64;
 				tile->height = 64;
 				tile->x = tile->xIdx * 64;
 				tile->y = tile->yIdx * 64;
-
+				tile->format = progressive->format;
+				tile->stride = GetBytesPerPixel(tile->format) * tile->width;
 				break;
 
 			default:
 				return -1039;
-				break;
 		}
 
 		if (boffset != blockLen)
@@ -1508,7 +1490,9 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 
 	if (count != region->numTiles)
 	{
-		WLog_WARN(TAG, "numTiles inconsistency: actual: %d, expected: %d\n", count, region->numTiles);
+		WLog_Print(progressive->log, WLOG_WARN,
+		           "numTiles inconsistency: actual: %"PRIu32", expected: %"PRIu16"\n", count,
+		           region->numTiles);
 	}
 
 	for (index = 0; index < region->numTiles; index++)
@@ -1534,12 +1518,17 @@ int progressive_process_tiles(PROGRESSIVE_CONTEXT* progressive, BYTE* blocks, UI
 	return (int) offset;
 }
 
-int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UINT32 SrcSize,
-		BYTE** ppDstData, DWORD DstFormat, int nDstStep, int nXDst, int nYDst, int nWidth, int nHeight, UINT16 surfaceId)
+INT32 progressive_decompress(PROGRESSIVE_CONTEXT* progressive,
+                             const BYTE* pSrcData, UINT32 SrcSize,
+                             BYTE* pDstData, UINT32 DstFormat,
+                             UINT32 nDstStep, UINT32 nXDst, UINT32 nYDst,
+                             REGION16* invalidRegion, UINT16 surfaceId)
 {
-	int status;
-	BYTE* block;
-	BYTE* blocks;
+	INT32 rc = 1;
+	INT32 status;
+	const BYTE* block;
+	const BYTE* blocks;
+	UINT16 i, j;
 	UINT16 index;
 	UINT16 boxLeft;
 	UINT16 boxTop;
@@ -1556,32 +1545,30 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 	UINT32 count = 0;
 	UINT32 offset = 0;
 	RFX_RECT* rect = NULL;
-	PROGRESSIVE_BLOCK_SYNC sync;
-	PROGRESSIVE_BLOCK_REGION* region;
-	PROGRESSIVE_BLOCK_CONTEXT context;
-	PROGRESSIVE_BLOCK_FRAME_BEGIN frameBegin;
-	PROGRESSIVE_BLOCK_FRAME_END frameEnd;
+	REGION16 clippingRects, updateRegion;
 	PROGRESSIVE_SURFACE_CONTEXT* surface;
-	RFX_COMPONENT_CODEC_QUANT* quantVal;
-	RFX_PROGRESSIVE_CODEC_QUANT* quantProgVal;
-
-	progressive->invert = FREERDP_PIXEL_FORMAT_IS_ABGR(DstFormat) ? TRUE : FALSE;
-
-	surface = (PROGRESSIVE_SURFACE_CONTEXT*) progressive_get_surface_data(progressive, surfaceId);
+	PROGRESSIVE_BLOCK_REGION* region;
+	surface = (PROGRESSIVE_SURFACE_CONTEXT*) progressive_get_surface_data(
+	              progressive, surfaceId);
 
 	if (!surface)
 		return -1001;
 
 	blocks = pSrcData;
 	blocksLen = SrcSize;
-
 	region = &(progressive->region);
+	progressive->format = DstFormat;
 
 	while ((blocksLen - offset) >= 6)
 	{
+		PROGRESSIVE_BLOCK_SYNC sync;
+		PROGRESSIVE_BLOCK_CONTEXT context;
+		PROGRESSIVE_BLOCK_FRAME_BEGIN frameBegin;
+		PROGRESSIVE_BLOCK_FRAME_END frameEnd;
+		RFX_COMPONENT_CODEC_QUANT* quantVal;
+		RFX_PROGRESSIVE_CODEC_QUANT* quantProgVal;
 		boffset = 0;
 		block = &blocks[offset];
-
 		blockType = *((UINT16*) &block[boffset + 0]); /* blockType (2 bytes) */
 		blockLen = *((UINT32*) &block[boffset + 2]); /* blockLen (4 bytes) */
 		boffset += 6;
@@ -1592,17 +1579,16 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 		switch (blockType)
 		{
 			case PROGRESSIVE_WBT_SYNC:
-
-				WLog_DBG(TAG, "ProgressiveSync");
-
+				WLog_Print(progressive->log, WLOG_DEBUG, "ProgressiveSync");
 				sync.blockType = blockType;
 				sync.blockLen = blockLen;
 
 				if ((blockLen - boffset) != 6)
 					return -1004;
 
-				sync.magic = (UINT32) *((UINT32*) &block[boffset + 0]); /* magic (4 bytes) */
-				sync.version = (UINT32) *((UINT16*) &block[boffset + 4]); /* version (2 bytes) */
+				sync.magic = (UINT32) * ((UINT32*) &block[boffset + 0]); /* magic (4 bytes) */
+				sync.version = (UINT32) * ((UINT16*) &block[boffset +
+				                           4]); /* version (2 bytes) */
 				boffset += 6;
 
 				if (sync.magic != 0xCACCACCA)
@@ -1614,32 +1600,29 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				break;
 
 			case PROGRESSIVE_WBT_FRAME_BEGIN:
-
 				frameBegin.blockType = blockType;
 				frameBegin.blockLen = blockLen;
 
 				if ((blockLen - boffset) < 6)
 					return -1007;
 
-				frameBegin.frameIndex = (UINT32) *((UINT32*) &block[boffset + 0]); /* frameIndex (4 bytes) */
-				frameBegin.regionCount = (UINT32) *((UINT16*) &block[boffset + 4]); /* regionCount (2 bytes) */
+				frameBegin.frameIndex = (UINT32) * ((UINT32*) &block[boffset +
+				                                    0]); /* frameIndex (4 bytes) */
+				frameBegin.regionCount = (UINT32) * ((UINT16*) &block[boffset +
+				                                     4]); /* regionCount (2 bytes) */
 				boffset += 6;
-
-				WLog_DBG(TAG, "ProgressiveFrameBegin: frameIndex: %d regionCount: %d",
-						frameBegin.frameIndex, frameBegin.regionCount);
-
+				WLog_Print(progressive->log, WLOG_DEBUG,
+				           "ProgressiveFrameBegin: frameIndex: %"PRIu32" regionCount: %"PRIu16"",
+				           frameBegin.frameIndex, frameBegin.regionCount);
 				/**
 				 * If the number of elements specified by the regionCount field is
 				 * larger than the actual number of elements in the regions field,
 				 * the decoder SHOULD ignore this inconsistency.
 				 */
-
 				break;
 
 			case PROGRESSIVE_WBT_FRAME_END:
-
-				WLog_DBG(TAG, "ProgressiveFrameEnd");
-
+				WLog_Print(progressive->log, WLOG_DEBUG, "ProgressiveFrameEnd");
 				frameEnd.blockType = blockType;
 				frameEnd.blockLen = blockLen;
 
@@ -1649,7 +1632,6 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				break;
 
 			case PROGRESSIVE_WBT_CONTEXT:
-
 				context.blockType = blockType;
 				context.blockLen = blockLen;
 
@@ -1664,17 +1646,14 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				if (context.tileSize != 64)
 					return -1010;
 
-				WLog_DBG(TAG, "ProgressiveContext: flags: 0x%02X", context.flags);
+				WLog_Print(progressive->log, WLOG_DEBUG, "ProgressiveContext: flags: 0x%02"PRIX8"", context.flags);
 
 				if (!(context.flags & RFX_SUBBAND_DIFFING))
-				{
-					WLog_WARN(TAG, "RFX_SUBBAND_DIFFING is not set");
-				}
+					WLog_Print(progressive->log, WLOG_WARN, "RFX_SUBBAND_DIFFING is not set");
 
 				break;
 
 			case PROGRESSIVE_WBT_REGION:
-
 				region->blockType = blockType;
 				region->blockLen = blockLen;
 
@@ -1687,7 +1666,8 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				region->numProgQuant = block[boffset + 4]; /* numProgQuant (1 byte) */
 				region->flags = block[boffset + 5]; /* flags (1 byte) */
 				region->numTiles = *((UINT16*) &block[boffset + 6]); /* numTiles (2 bytes) */
-				region->tileDataSize = *((UINT32*) &block[boffset + 8]); /* tileDataSize (4 bytes) */
+				region->tileDataSize = *((UINT32*) &block[boffset +
+				                         8]); /* tileDataSize (4 bytes) */
 				boffset += 12;
 
 				if (region->tileSize != 64)
@@ -1704,14 +1684,19 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 
 				if (region->numRects > progressive->cRects)
 				{
-					progressive->rects = (RFX_RECT*) realloc(progressive->rects, region->numRects * sizeof(RFX_RECT));
+					RFX_RECT* tmpBuf = (RFX_RECT*) realloc(progressive->rects,
+					               region->numRects * sizeof(RFX_RECT));
+					if (!tmpBuf)
+						return -1016;
+
+					progressive->rects = tmpBuf;
 					progressive->cRects = region->numRects;
 				}
 
 				region->rects = progressive->rects;
 
 				if (!region->rects)
-					return -1016;
+					return -1017;
 
 				for (index = 0; index < region->numRects; index++)
 				{
@@ -1724,19 +1709,24 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				}
 
 				if ((blockLen - boffset) < (region->numQuant * 5))
-					return -1017;
+					return -1018;
 
 				if (region->numQuant > progressive->cQuant)
 				{
-					progressive->quantVals = (RFX_COMPONENT_CODEC_QUANT*) realloc(progressive->quantVals,
-							region->numQuant * sizeof(RFX_COMPONENT_CODEC_QUANT));
+					RFX_COMPONENT_CODEC_QUANT* tmpBuf = (RFX_COMPONENT_CODEC_QUANT*) realloc(
+					                             progressive->quantVals,
+					                             region->numQuant * sizeof(RFX_COMPONENT_CODEC_QUANT));
+					if (!tmpBuf)
+						return -1019;
+
+					progressive->quantVals = tmpBuf;
 					progressive->cQuant = region->numQuant;
 				}
 
 				region->quantVals = progressive->quantVals;
 
 				if (!region->quantVals)
-					return -1018;
+					return -1020;
 
 				for (index = 0; index < region->numQuant; index++)
 				{
@@ -1752,38 +1742,49 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				}
 
 				if ((blockLen - boffset) < (region->numProgQuant * 16))
-					return -1019;
+					return -1021;
 
 				if (region->numProgQuant > progressive->cProgQuant)
 				{
-					progressive->quantProgVals = (RFX_PROGRESSIVE_CODEC_QUANT*) realloc(progressive->quantProgVals,
-							region->numProgQuant * sizeof(RFX_PROGRESSIVE_CODEC_QUANT));
+					RFX_PROGRESSIVE_CODEC_QUANT* tmpBuf = (RFX_PROGRESSIVE_CODEC_QUANT*) realloc(
+					                                 progressive->quantProgVals,
+					                                 region->numProgQuant * sizeof(RFX_PROGRESSIVE_CODEC_QUANT));
+					if (!tmpBuf)
+						return -1022;
+
+					progressive->quantProgVals = tmpBuf;
 					progressive->cProgQuant = region->numProgQuant;
 				}
 
 				region->quantProgVals = progressive->quantProgVals;
 
 				if (!region->quantProgVals)
-					return -1020;
+					return -1023;
 
 				for (index = 0; index < region->numProgQuant; index++)
 				{
 					quantProgVal = &(region->quantProgVals[index]);
 					quantProgVal->quality = block[boffset + 0];
-
-					progressive_component_codec_quant_read(&block[boffset + 1], &(quantProgVal->yQuantValues));
-					progressive_component_codec_quant_read(&block[boffset + 6], &(quantProgVal->cbQuantValues));
-					progressive_component_codec_quant_read(&block[boffset + 11], &(quantProgVal->crQuantValues));
+					progressive_component_codec_quant_read(&block[boffset + 1],
+					                                       &(quantProgVal->yQuantValues));
+					progressive_component_codec_quant_read(&block[boffset + 6],
+					                                       &(quantProgVal->cbQuantValues));
+					progressive_component_codec_quant_read(&block[boffset + 11],
+					                                       &(quantProgVal->crQuantValues));
 					boffset += 16;
 				}
 
 				if ((blockLen - boffset) < region->tileDataSize)
-					return -1021;
+					return -1024;
 
 				if (progressive->cTiles < surface->gridSize)
 				{
-					progressive->tiles = (RFX_PROGRESSIVE_TILE**) realloc(progressive->tiles,
-							surface->gridSize * sizeof(RFX_PROGRESSIVE_TILE*));
+					RFX_PROGRESSIVE_TILE** tmpBuf = (RFX_PROGRESSIVE_TILE**) realloc(progressive->tiles,
+					                     surface->gridSize * sizeof(RFX_PROGRESSIVE_TILE*));
+					if (!tmpBuf)
+						return -1025;
+
+					progressive->tiles = tmpBuf;
 					progressive->cTiles = surface->gridSize;
 				}
 
@@ -1792,13 +1793,13 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				if (!region->tiles)
 					return -1;
 
-				WLog_DBG(TAG, "ProgressiveRegion: numRects: %d numTiles: %d tileDataSize: %d flags: 0x%02X numQuant: %d numProgQuant: %d",
-						region->numRects, region->numTiles, region->tileDataSize, region->flags, region->numQuant, region->numProgQuant);
+				WLog_Print(progressive->log, WLOG_DEBUG,
+				           "ProgressiveRegion: numRects: %"PRIu16" numTiles: %"PRIu16" tileDataSize: %"PRIu32" flags: 0x%02"PRIX8" numQuant: %"PRIu8" numProgQuant: %"PRIu8"",
+				           region->numRects, region->numTiles, region->tileDataSize, region->flags,
+				           region->numQuant, region->numProgQuant);
 
 				if (!(region->flags & RFX_DWT_REDUCE_EXTRAPOLATE))
-				{
-					WLog_WARN(TAG, "RFX_DWT_REDUCE_EXTRAPOLATE is not set");
-				}
+					WLog_Print(progressive->log, WLOG_WARN, "RFX_DWT_REDUCE_EXTRAPOLATE is not set");
 
 				boxLeft = surface->gridWidth;
 				boxTop = surface->gridHeight;
@@ -1808,7 +1809,6 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				for (index = 0; index < region->numRects; index++)
 				{
 					rect = &(region->rects[index]);
-
 					idxLeft = rect->x / 64;
 					idxTop = rect->y / 64;
 					idxRight = (rect->x + rect->width + 63) / 64;
@@ -1826,11 +1826,13 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 					if (idxBottom > boxBottom)
 						boxBottom = idxBottom;
 
-					WLog_DBG(TAG, "rect[%d]: x: %d y: %d w: %d h: %d",
-							index, rect->x, rect->y, rect->width, rect->height);
+					WLog_Print(progressive->log, WLOG_DEBUG,
+					           "rect[%"PRIu16"]: x: %"PRIu16" y: %"PRIu16" w: %"PRIu16" h: %"PRIu16"",
+					           index, rect->x, rect->y, rect->width, rect->height);
 				}
 
-				status = progressive_process_tiles(progressive, &block[boffset], region->tileDataSize, surface);
+				status = progressive_process_tiles(progressive, &block[boffset],
+				                                   region->tileDataSize, surface);
 
 				if (status < 0)
 					return status;
@@ -1854,7 +1856,6 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 				}
 
 				boffset += (UINT32) status;
-
 				break;
 
 			default:
@@ -1872,12 +1873,67 @@ int progressive_decompress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UIN
 	if (offset != blocksLen)
 		return -1041;
 
-	return 1;
+	region = &(progressive->region);
+	region16_init(&clippingRects);
+
+	for (i = 0; i < region->numRects; i++)
+	{
+		RECTANGLE_16 clippingRect;
+		const RFX_RECT* rect = &(region->rects[i]);
+		clippingRect.left = nXDst + rect->x;
+		clippingRect.top = nYDst + rect->y;
+		clippingRect.right = clippingRect.left + rect->width;
+		clippingRect.bottom = clippingRect.top + rect->height;
+		region16_union_rect(&clippingRects, &clippingRects, &clippingRect);
+	}
+
+	for (i = 0; i < region->numTiles; i++)
+	{
+		UINT32 nbUpdateRects;
+		const RECTANGLE_16* updateRects;
+		RECTANGLE_16 updateRect;
+		RFX_PROGRESSIVE_TILE* tile = region->tiles[i];
+		updateRect.left = nXDst + tile->x;
+		updateRect.top = nYDst + tile->y;
+		updateRect.right = updateRect.left + 64;
+		updateRect.bottom = updateRect.top + 64;
+		region16_init(&updateRegion);
+		region16_intersect_rect(&updateRegion, &clippingRects, &updateRect);
+		updateRects = region16_rects(&updateRegion, &nbUpdateRects);
+
+		for (j = 0; j < nbUpdateRects; j++)
+		{
+			const RECTANGLE_16* rect = &updateRects[j];
+			const UINT32 nXSrc = rect->left - (nXDst + tile->x);
+			const UINT32 nYSrc = rect->top - (nYDst + tile->y);
+			const UINT32 width = rect->right - rect->left;
+			const UINT32 height = rect->bottom - rect->top;
+
+			if (!freerdp_image_copy(pDstData, DstFormat, nDstStep,
+			                        rect->left, rect->top,
+			                        width, height, tile->data, tile->format,
+			                        tile->stride,
+			                        nXSrc, nYSrc, NULL, FREERDP_FLIP_NONE))
+			{
+				rc = -42;
+				break;
+			}
+
+			if (invalidRegion)
+				region16_union_rect(invalidRegion, invalidRegion, rect);
+		}
+
+		region16_uninit(&updateRegion);
+	}
+
+	region16_uninit(&clippingRects);
+	return rc;
 }
 
-int progressive_compress(PROGRESSIVE_CONTEXT* progressive, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppDstData, UINT32* pDstSize)
+int progressive_compress(PROGRESSIVE_CONTEXT* progressive, const BYTE* pSrcData,
+                         UINT32 SrcSize, BYTE** ppDstData, UINT32* pDstSize)
 {
-	return 1;
+	return -1;
 }
 
 BOOL progressive_context_reset(PROGRESSIVE_CONTEXT* progressive)
@@ -1891,55 +1947,50 @@ BOOL progressive_context_reset(PROGRESSIVE_CONTEXT* progressive)
 PROGRESSIVE_CONTEXT* progressive_context_new(BOOL Compressor)
 {
 	PROGRESSIVE_CONTEXT* progressive;
-
 	progressive = (PROGRESSIVE_CONTEXT*) calloc(1, sizeof(PROGRESSIVE_CONTEXT));
 
 	if (progressive)
 	{
 		progressive->Compressor = Compressor;
-
 		progressive->bufferPool = BufferPool_New(TRUE, (8192 + 32) * 3, 16);
-
 		progressive->cRects = 64;
-		progressive->rects = (RFX_RECT*) malloc(progressive->cRects * sizeof(RFX_RECT));
+		progressive->rects = (RFX_RECT*) calloc(progressive->cRects, sizeof(RFX_RECT));
 
 		if (!progressive->rects)
 			goto cleanup;
 
 		progressive->cTiles = 64;
-		progressive->tiles = (RFX_PROGRESSIVE_TILE**) malloc(progressive->cTiles * sizeof(RFX_PROGRESSIVE_TILE*));
+		progressive->tiles = (RFX_PROGRESSIVE_TILE**) calloc(progressive->cTiles,
+		                     sizeof(RFX_PROGRESSIVE_TILE*));
 
 		if (!progressive->tiles)
 			goto cleanup;
 
 		progressive->cQuant = 8;
-		progressive->quantVals = (RFX_COMPONENT_CODEC_QUANT*) malloc(progressive->cQuant * sizeof(RFX_COMPONENT_CODEC_QUANT));
+		progressive->quantVals = (RFX_COMPONENT_CODEC_QUANT*) calloc(
+		                             progressive->cQuant, sizeof(RFX_COMPONENT_CODEC_QUANT));
 
 		if (!progressive->quantVals)
 			goto cleanup;
 
 		progressive->cProgQuant = 8;
-		progressive->quantProgVals = (RFX_PROGRESSIVE_CODEC_QUANT*) malloc(progressive->cProgQuant * sizeof(RFX_PROGRESSIVE_CODEC_QUANT));
+		progressive->quantProgVals = (RFX_PROGRESSIVE_CODEC_QUANT*) calloc(
+		                                 progressive->cProgQuant, sizeof(RFX_PROGRESSIVE_CODEC_QUANT));
 
 		if (!progressive->quantProgVals)
 			goto cleanup;
 
-		ZeroMemory(&(progressive->quantProgValFull), sizeof(RFX_PROGRESSIVE_CODEC_QUANT));
+		ZeroMemory(&(progressive->quantProgValFull),
+		           sizeof(RFX_PROGRESSIVE_CODEC_QUANT));
 		progressive->quantProgValFull.quality = 100;
-
 		progressive->SurfaceContexts = HashTable_New(TRUE);
-
 		progressive_context_reset(progressive);
+		progressive->log = WLog_Get(TAG);
 	}
 
 	return progressive;
-
 cleanup:
-	free(progressive->rects);
-	free(progressive->tiles);
-	free(progressive->quantVals);
-	free(progressive->quantProgVals);
-	free(progressive);
+	progressive_context_free(progressive);
 	return NULL;
 }
 
@@ -1954,23 +2005,24 @@ void progressive_context_free(PROGRESSIVE_CONTEXT* progressive)
 		return;
 
 	BufferPool_Free(progressive->bufferPool);
-
 	free(progressive->rects);
 	free(progressive->tiles);
 	free(progressive->quantVals);
 	free(progressive->quantProgVals);
 
-	count = HashTable_GetKeys(progressive->SurfaceContexts, &pKeys);
-
-	for (index = 0; index < count; index++)
+	if (progressive->SurfaceContexts)
 	{
-		surface = (PROGRESSIVE_SURFACE_CONTEXT*) HashTable_GetItemValue(progressive->SurfaceContexts, (void*) pKeys[index]);
-		progressive_surface_context_free(surface);
+		count = HashTable_GetKeys(progressive->SurfaceContexts, &pKeys);
+
+		for (index = 0; index < count; index++)
+		{
+			surface = (PROGRESSIVE_SURFACE_CONTEXT*) HashTable_GetItemValue(progressive->SurfaceContexts, (void*) pKeys[index]);
+			progressive_surface_context_free(surface);
+		}
+
+		free(pKeys);
+		HashTable_Free(progressive->SurfaceContexts);
 	}
-
-	free(pKeys);
-
-	HashTable_Free(progressive->SurfaceContexts);
 
 	free(progressive);
 }

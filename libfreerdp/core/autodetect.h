@@ -17,14 +17,15 @@
  * limitations under the License.
  */
 
-#ifndef __AUTODETECT_H
-#define __AUTODETECT_H
+#ifndef FREERDP_LIB_CORE_AUTODETECT_H
+#define FREERDP_LIB_CORE_AUTODETECT_H
 
 #include "rdp.h"
 
 #include <freerdp/freerdp.h>
 #include <freerdp/autodetect.h>
 #include <freerdp/log.h>
+#include <freerdp/api.h>
 
 #include <winpr/stream.h>
 #include <winpr/sysinfo.h>
@@ -32,18 +33,23 @@
 #define TYPE_ID_AUTODETECT_REQUEST	0x00
 #define TYPE_ID_AUTODETECT_RESPONSE	0x01
 
-int rdp_recv_autodetect_request_packet(rdpRdp* rdp, wStream* s);
-int rdp_recv_autodetect_response_packet(rdpRdp* rdp, wStream* s);
+FREERDP_LOCAL int rdp_recv_autodetect_request_packet(rdpRdp* rdp, wStream* s);
+FREERDP_LOCAL int rdp_recv_autodetect_response_packet(rdpRdp* rdp, wStream* s);
 
-rdpAutoDetect* autodetect_new(void);
-void autodetect_free(rdpAutoDetect* autodetect);
+FREERDP_LOCAL rdpAutoDetect* autodetect_new(void);
+FREERDP_LOCAL void autodetect_free(rdpAutoDetect* autodetect);
 
-void autodetect_register_server_callbacks(rdpAutoDetect* autodetect);
-BOOL autodetect_send_connecttime_rtt_measure_request(rdpContext* context, UINT16 sequenceNumber);
-BOOL autodetect_send_connecttime_bandwidth_measure_start(rdpContext* context, UINT16 sequenceNumber);
-BOOL autodetect_send_bandwidth_measure_payload(rdpContext* context, UINT16 payloadLength, UINT16 sequenceNumber);
-BOOL autodetect_send_connecttime_bandwidth_measure_stop(rdpContext* context, UINT16 payloadLength, UINT16 sequenceNumber);
+FREERDP_LOCAL void autodetect_register_server_callbacks(
+    rdpAutoDetect* autodetect);
+FREERDP_LOCAL BOOL autodetect_send_connecttime_rtt_measure_request(
+    rdpContext* context, UINT16 sequenceNumber);
+FREERDP_LOCAL BOOL autodetect_send_connecttime_bandwidth_measure_start(
+    rdpContext* context, UINT16 sequenceNumber);
+FREERDP_LOCAL BOOL autodetect_send_bandwidth_measure_payload(
+    rdpContext* context, UINT16 payloadLength, UINT16 sequenceNumber);
+FREERDP_LOCAL BOOL autodetect_send_connecttime_bandwidth_measure_stop(
+    rdpContext* context, UINT16 payloadLength, UINT16 sequenceNumber);
 
 #define AUTODETECT_TAG FREERDP_TAG("core.autodetect")
 
-#endif /* __AUTODETECT_H */
+#endif /* FREERDP_LIB_CORE_AUTODETECT_H */

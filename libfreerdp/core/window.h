@@ -18,21 +18,24 @@
  * limitations under the License.
  */
 
-#ifndef __WINDOW_H
-#define __WINDOW_H
+#ifndef FREERDP_LIB_CORE_WINDOW_H
+#define FREERDP_LIB_CORE_WINDOW_H
 
 #include "update.h"
 
 #include <winpr/stream.h>
 #include <freerdp/log.h>
+#include <freerdp/api.h>
 
-BOOL update_recv_altsec_window_order(rdpUpdate* update, wStream* s);
+FREERDP_LOCAL void update_free_window_icon_info(ICON_INFO* iconInfo);
+FREERDP_LOCAL BOOL update_recv_altsec_window_order(rdpUpdate* update,
+        wStream* s);
 
 #define WND_TAG FREERDP_TAG("core.wnd")
 #ifdef WITH_DEBUG_WND
-#define DEBUG_WND(fmt, ...) WLog_DBG(WND_TAG, fmt, ## __VA_ARGS__)
+#define DEBUG_WND(...) WLog_DBG(WND_TAG, __VA_ARGS__)
 #else
-#define DEBUG_WND(fmt, ...) do { } while (0)
+#define DEBUG_WND(...) do { } while (0)
 #endif
 
-#endif /* __WINDOW_H */
+#endif /* FREERDP_LIB_CORE_WINDOW_H */

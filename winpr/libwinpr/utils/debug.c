@@ -396,7 +396,7 @@ char** winpr_backtrace_symbols(void* buffer, size_t* used)
 		size_t array_size = data->used * sizeof(char*);
 		size_t lines_size = data->used * line_len;
 		char **vlines = calloc(1, array_size + lines_size);
-		SYMBOL_INFO* symbol = calloc(sizeof(SYMBOL_INFO) + line_len * sizeof(char), 1);
+		SYMBOL_INFO* symbol = calloc(1, sizeof(SYMBOL_INFO) + line_len * sizeof(char));
 		IMAGEHLP_LINE64* line = (IMAGEHLP_LINE64*) calloc(1, sizeof(IMAGEHLP_LINE64));
 
 		if (!vlines || !symbol || !line)
@@ -424,10 +424,10 @@ char** winpr_backtrace_symbols(void* buffer, size_t* used)
 
 			if (SymGetLineFromAddr64(process, address, &displacement, line))
 			{
-				sprintf_s(vlines[i], line_len, "%08lX: %s in %s:%lu", symbol->Address, symbol->Name, line->FileName, line->LineNumber);
+				sprintf_s(vlines[i], line_len, "%016"PRIx64": %s in %s:%"PRIu32, symbol->Address, symbol->Name, line->FileName, line->LineNumber);
 			}
 			else
-				sprintf_s(vlines[i], line_len, "%08lX: %s", symbol->Address, symbol->Name);
+				sprintf_s(vlines[i], line_len, "%016"PRIx64": %s", symbol->Address, symbol->Name);
 			}
 
 			if (used)
@@ -495,7 +495,7 @@ void winpr_log_backtrace(const char* tag, DWORD level, DWORD size)
 	if (msg)
 	{
 		for (x=0; x<used; x++)
-			WLog_LVL(tag, level, "%lu: %s\n", (unsigned long)x, msg[x]);
+			WLog_LVL(tag, level, "%"PRIuz": %s\n", x, msg[x]);
 	}
 	winpr_backtrace_free(stack);
 }
@@ -535,7 +535,7 @@ char* winpr_strerror(DWORD dw, char* dmsg, size_t size)
 		free(msg);
 #endif
 	} else {
-		_snprintf(dmsg, size, "FAILURE: %08X", GetLastError());
+		_snprintf(dmsg, size, "FAILURE: 0x%08"PRIX32"", GetLastError());
 	}
 #else /* defined(_WIN32) */
 	_snprintf(dmsg, size, "%s", strerror(dw));

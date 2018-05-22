@@ -1,6 +1,6 @@
 /**
  * FreeRDP: A Remote Desktop Protocol Implementation
- * Credential Security Support Provider (CredSSP)
+ * Network Level Authentication (NLA)
  *
  * Copyright 2010-2012 Marc-Andre Moreau <marcandre.moreau@gmail.com>
  *
@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_CORE_NLA_H
-#define FREERDP_CORE_NLA_H
+#ifndef FREERDP_LIB_CORE_NLA_H
+#define FREERDP_LIB_CORE_NLA_H
 
 typedef struct rdp_nla rdpNla;
 
@@ -56,10 +56,17 @@ struct rdp_nla
 	freerdp* instance;
 	CtxtHandle context;
 	LPTSTR SspiModule;
+	char* SamFile;
 	rdpSettings* settings;
 	rdpTransport* transport;
 	UINT32 cbMaxToken;
+#if defined(UNICODE)
+	SEC_WCHAR* packageName;
+#else
+	SEC_CHAR* packageName;
+#endif
 	UINT32 version;
+	UINT32 peerVersion;
 	UINT32 errorCode;
 	ULONG fContextReq;
 	ULONG pfContextAttr;
@@ -77,22 +84,24 @@ struct rdp_nla
 	SecBuffer negoToken;
 	SecBuffer pubKeyAuth;
 	SecBuffer authInfo;
+	SecBuffer ClientNonce;
 	SecBuffer PublicKey;
 	SecBuffer tsCredentials;
-	WINPR_RC4_CTX rc4SealState;
 	LPTSTR ServicePrincipalName;
 	SEC_WINNT_AUTH_IDENTITY* identity;
 	PSecurityFunctionTable table;
 	SecPkgContext_Sizes ContextSizes;
 };
 
-int nla_authenticate(rdpNla* nla);
-LPTSTR nla_make_spn(const char* ServiceClass, const char* hostname);
+FREERDP_LOCAL int nla_authenticate(rdpNla* nla);
+FREERDP_LOCAL LPTSTR nla_make_spn(const char* ServiceClass,
+                                  const char* hostname);
 
-int nla_client_begin(rdpNla* nla);
-int nla_recv_pdu(rdpNla* nla, wStream* s);
+FREERDP_LOCAL int nla_client_begin(rdpNla* nla);
+FREERDP_LOCAL int nla_recv_pdu(rdpNla* nla, wStream* s);
 
-rdpNla* nla_new(freerdp* instance, rdpTransport* transport, rdpSettings* settings);
-void nla_free(rdpNla* nla);
+FREERDP_LOCAL rdpNla* nla_new(freerdp* instance, rdpTransport* transport,
+                              rdpSettings* settings);
+FREERDP_LOCAL void nla_free(rdpNla* nla);
 
-#endif /* FREERDP_CORE_NLA_H */
+#endif /* FREERDP_LIB_CORE_NLA_H */

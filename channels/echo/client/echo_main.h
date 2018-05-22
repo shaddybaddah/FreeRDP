@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __ECHO_MAIN_H
-#define __ECHO_MAIN_H
+#ifndef FREERDP_CHANNEL_ECHO_CLIENT_MAIN_H
+#define FREERDP_CHANNEL_ECHO_CLIENT_MAIN_H
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -31,10 +31,10 @@
 
 #define DVC_TAG CHANNELS_TAG("echo.client")
 #ifdef WITH_DEBUG_DVC
-#define DEBUG_DVC(fmt, ...) WLog_DBG(DVC_TAG, fmt, ## __VA_ARGS__)
+#define DEBUG_DVC(...) WLog_DBG(DVC_TAG, __VA_ARGS__)
 #else
-#define DEBUG_DVC(fmt, ...) do { } while (0)
+#define DEBUG_DVC(...) do { } while (0)
 #endif
 
-#endif /* __ECHO_MAIN_H */
+#endif /* FREERDP_CHANNEL_ECHO_CLIENT_MAIN_H */
 

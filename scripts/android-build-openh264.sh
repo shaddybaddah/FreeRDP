@@ -9,8 +9,14 @@ function build {
 	BASE=$(pwd)
 	common_run cd $BUILD_SRC
 	PATH=$ANDROID_NDK:$PATH
-	MAKE="make PATH=$PATH OS=android NDKROOT=$ANDROID_NDK TARGET=android-$2 NDKLEVEL=$2 ARCH=$1 -j libraries"
+	MAKE="make PATH=$PATH ENABLEPIC=Yes OS=android NDKROOT=$ANDROID_NDK TARGET=android-$2 NDKLEVEL=$2 ARCH=$1 -j libraries"
 	common_run git clean -xdf
+	common_run export QUIET_AR="$CCACHE "
+	common_run export QUIET_ASM="$CCACHE "
+	common_run export QUIET_CC="$CCACHE "
+	common_run export QUIET_CCAR="$CCACHE "
+	common_run export QUIET_CXX="$CCACHE "
+
 	common_run $MAKE
 	# Install creates a non optimal directory layout, fix that
 	common_run $MAKE PREFIX=$BUILD_SRC/libs/$1 install
@@ -44,12 +50,12 @@ do
 
 	build $OARCH $NDK_TARGET
 
-	if [ ! -d $BUILD_DST/include ];
+	if [ ! -d $BUILD_DST/$ARCH/include ];
 	then
-		common_run mkdir -p $BUILD_DST/include
+		common_run mkdir -p $BUILD_DST/$ARCH/include
 	fi
 
-	common_run cp -L -r $BUILD_SRC/libs/$OARCH/include/ $BUILD_DST/
+	common_run cp -L -r $BUILD_SRC/libs/$OARCH/include/ $BUILD_DST/$ARCH/
 	if [ ! -d $BUILD_DST/$ARCH ];
 	then
 		common_run mkdir -p $BUILD_DST/$ARCH

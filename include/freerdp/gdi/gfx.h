@@ -27,11 +27,11 @@ struct gdi_gfx_surface
 {
 	UINT16 surfaceId;
 	rdpCodecs* codecs;
+	H264_CONTEXT *h264;
 	UINT32 width;
 	UINT32 height;
-	BOOL alpha;
 	BYTE* data;
-	int scanline;
+	UINT32 scanline;
 	UINT32 format;
 	BOOL outputMapped;
 	UINT32 outputOriginX;
@@ -45,9 +45,8 @@ struct gdi_gfx_cache_entry
 	UINT64 cacheKey;
 	UINT32 width;
 	UINT32 height;
-	BOOL alpha;
 	BYTE* data;
-	int scanline;
+	UINT32 scanline;
 	UINT32 format;
 };
 typedef struct gdi_gfx_cache_entry gdiGfxCacheEntry;

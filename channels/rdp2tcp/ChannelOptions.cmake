@@ -2,7 +2,7 @@ set(OPTION_DEFAULT OFF)
 set(OPTION_CLIENT_DEFAULT ON)
 set(OPTION_SERVER_DEFAULT OFF)
 
-define_channel_options(NAME "rdp2tcp" TYPE "static"
+define_channel_options(NAME "rdp2tcp" TYPE "dynamic"
 	DESCRIPTION "Tunneling TCP over RDP"
 	DEFAULT ${OPTION_DEFAULT})
 

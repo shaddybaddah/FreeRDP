@@ -17,14 +17,15 @@
  * limitations under the License.
  */
 
-#ifndef __MULTITRANSPORT_H
-#define __MULTITRANSPORT_H
+#ifndef FREERDP_LIB_CORE_MULTITRANSPORT_H
+#define FREERDP_LIB_CORE_MULTITRANSPORT_H
 
 typedef struct rdp_multitransport rdpMultitransport;
 
 #include "rdp.h"
 
 #include <freerdp/freerdp.h>
+#include <freerdp/api.h>
 
 #include <winpr/stream.h>
 
@@ -33,9 +34,9 @@ struct rdp_multitransport
 	UINT32 placeholder;
 };
 
-int rdp_recv_multitransport_packet(rdpRdp* rdp, wStream* s);
+FREERDP_LOCAL int rdp_recv_multitransport_packet(rdpRdp* rdp, wStream* s);
 
-rdpMultitransport* multitransport_new(void);
-void multitransport_free(rdpMultitransport* multitransport);
+FREERDP_LOCAL rdpMultitransport* multitransport_new(void);
+FREERDP_LOCAL void multitransport_free(rdpMultitransport* multitransport);
 
-#endif /* __MULTITRANSPORT_H */
+#endif /* FREERDP_LIB_CORE_MULTITRANSPORT_H */

@@ -27,20 +27,14 @@
 
 #define TAG FREERDP_TAG("core.codecs")
 
-BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width, UINT32 height)
+BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags,
+                                   UINT32 width, UINT32 height)
 {
 	if ((flags & FREERDP_CODEC_INTERLEAVED) && !codecs->interleaved)
 	{
 		if (!(codecs->interleaved = bitmap_interleaved_context_new(FALSE)))
 		{
 			WLog_ERR(TAG, "Failed to create interleaved codec context");
-			return FALSE;
-		}
-
-		if (!bitmap_interleaved_context_reset(codecs->interleaved))
-		{
-			WLog_ERR(TAG, "Failed to reset interleaved codec context");
-			bitmap_interleaved_context_free(codecs->interleaved);
 			return FALSE;
 		}
 	}
@@ -52,13 +46,6 @@ BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width
 			WLog_ERR(TAG, "Failed to create planar bitmap codec context");
 			return FALSE;
 		}
-
-		if (!freerdp_bitmap_planar_context_reset(codecs->planar))
-		{
-			WLog_ERR(TAG, "Failed to reset plannar bitmap codec context");
-			freerdp_bitmap_planar_context_free(codecs->planar);
-			return FALSE;
-		}
 	}
 
 	if ((flags & FREERDP_CODEC_NSCODEC) && !codecs->nsc)
@@ -66,13 +53,6 @@ BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width
 		if (!(codecs->nsc = nsc_context_new()))
 		{
 			WLog_ERR(TAG, "Failed to create nsc codec context");
-			return FALSE;
-		}
-
-		if (!nsc_context_reset(codecs->nsc, width, height))
-		{
-			WLog_ERR(TAG, "Failed to reset nsc codec context");
-			nsc_context_free(codecs->nsc);
 			return FALSE;
 		}
 	}
@@ -84,13 +64,6 @@ BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width
 			WLog_ERR(TAG, "Failed to create rfx codec context");
 			return FALSE;
 		}
-
-		if (!rfx_context_reset(codecs->rfx, width, height))
-		{
-			WLog_ERR(TAG, "Failed to reset rfx codec context");
-			rfx_context_free(codecs->rfx);
-			return FALSE;
-		}
 	}
 
 	if ((flags & FREERDP_CODEC_CLEARCODEC) && !codecs->clear)
@@ -100,18 +73,10 @@ BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width
 			WLog_ERR(TAG, "Failed to create clear codec context");
 			return FALSE;
 		}
-
-		if (!clear_context_reset(codecs->clear))
-		{
-			WLog_ERR(TAG, "Failed to reset clear codec context");
-			clear_context_free(codecs->clear);
-			return FALSE;
-		}
 	}
 
 	if (flags & FREERDP_CODEC_ALPHACODEC)
 	{
-
 	}
 
 	if ((flags & FREERDP_CODEC_PROGRESSIVE) && !codecs->progressive)
@@ -121,15 +86,9 @@ BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width
 			WLog_ERR(TAG, "Failed to create progressive codec context");
 			return FALSE;
 		}
-
-		if (!progressive_context_reset(codecs->progressive))
-		{
-			WLog_ERR(TAG, "Failed to reset progressive codec context");
-			progressive_context_free(codecs->progressive);
-			return FALSE;
-		}
 	}
 
+#ifdef WITH_GFX_H264
 	if ((flags & (FREERDP_CODEC_AVC420 | FREERDP_CODEC_AVC444)) && !codecs->h264)
 	{
 		if (!(codecs->h264 = h264_context_new(FALSE)))
@@ -137,19 +96,14 @@ BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width
 			WLog_ERR(TAG, "Failed to create h264 codec context");
 			return FALSE;
 		}
-
-		if (!h264_context_reset(codecs->h264, width, height))
-		{
-			WLog_ERR(TAG, "Failed to reset h264 codec context");
-			h264_context_free(codecs->h264);
-			return FALSE;
-		}
 	}
+#endif
 
-	return TRUE;
+	return freerdp_client_codecs_reset(codecs, flags, width, height);
 }
 
-BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width, UINT32 height)
+BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width,
+                                 UINT32 height)
 {
 	BOOL rc = TRUE;
 
@@ -165,7 +119,7 @@ BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width, 
 	{
 		if (codecs->planar)
 		{
-			rc &= freerdp_bitmap_planar_context_reset(codecs->planar);
+			rc &= freerdp_bitmap_planar_context_reset(codecs->planar, width, height);
 		}
 	}
 
@@ -195,7 +149,6 @@ BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width, 
 
 	if (flags & FREERDP_CODEC_ALPHACODEC)
 	{
-
 	}
 
 	if (flags & FREERDP_CODEC_PROGRESSIVE)
@@ -206,6 +159,7 @@ BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width, 
 		}
 	}
 
+#ifdef WITH_GFX_H264
 	if (flags & (FREERDP_CODEC_AVC420 | FREERDP_CODEC_AVC444))
 	{
 		if (codecs->h264)
@@ -213,6 +167,7 @@ BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width, 
 			rc &= h264_context_reset(codecs->h264, width, height);
 		}
 	}
+#endif
 
 	return rc;
 }
@@ -220,7 +175,6 @@ BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width, 
 rdpCodecs* codecs_new(rdpContext* context)
 {
 	rdpCodecs* codecs;
-
 	codecs = (rdpCodecs*) calloc(1, sizeof(rdpCodecs));
 
 	if (codecs)
@@ -246,11 +200,13 @@ void codecs_free(rdpCodecs* codecs)
 		codecs->nsc = NULL;
 	}
 
+#ifdef WITH_GFX_H264
 	if (codecs->h264)
 	{
 		h264_context_free(codecs->h264);
 		codecs->h264 = NULL;
 	}
+#endif
 
 	if (codecs->clear)
 	{

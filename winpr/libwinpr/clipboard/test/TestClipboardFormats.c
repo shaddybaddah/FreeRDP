@@ -7,28 +7,28 @@ int TestClipboardFormats(int argc, char* argv[])
 {
 	UINT32 index;
 	UINT32 count;
-	UINT32 formatId;
 	UINT32* pFormatIds;
 	const char* formatName;
 	wClipboard* clipboard;
 	UINT32 utf8StringFormatId;
 
 	clipboard = ClipboardCreate();
+	if (!clipboard)
+		return -1;
 
-	formatId = ClipboardRegisterFormat(clipboard, "text/html");
-	formatId = ClipboardRegisterFormat(clipboard, "image/bmp");
-	formatId = ClipboardRegisterFormat(clipboard, "image/png");
+	ClipboardRegisterFormat(clipboard, "text/html");
+	ClipboardRegisterFormat(clipboard, "image/bmp");
+	ClipboardRegisterFormat(clipboard, "image/png");
+
 	utf8StringFormatId = ClipboardRegisterFormat(clipboard, "UTF8_STRING");
-
 	pFormatIds = NULL;
 	count = ClipboardGetRegisteredFormatIds(clipboard, &pFormatIds);
 
 	for (index = 0; index < count; index++)
 	{
-		formatId = pFormatIds[index];
+		UINT32 formatId = pFormatIds[index];
 		formatName = ClipboardGetFormatName(clipboard, formatId);
-
-		fprintf(stderr, "Format: 0x%04X %s\n", formatId, formatName);
+		fprintf(stderr, "Format: 0x%08"PRIX32" %s\n", formatId, formatName);
 	}
 
 	free(pFormatIds);
@@ -38,26 +38,22 @@ int TestClipboardFormats(int argc, char* argv[])
 		BOOL bSuccess;
 		UINT32 SrcSize;
 		UINT32 DstSize;
-		char* pSrcData;
+		const char* pSrcData = "this is a test string";
 		char* pDstData;
 
-		pSrcData = _strdup("this is a test string");
 		if (!pSrcData)
 		{
 			fprintf(stderr, "Memory allocation failed\n");
 			return -1;
 		}
-		SrcSize = (UINT32) (strlen(pSrcData) + 1);
 
-		bSuccess = ClipboardSetData(clipboard, utf8StringFormatId, (void*) pSrcData, SrcSize);
-
-		fprintf(stderr, "ClipboardSetData: %d\n", bSuccess);
-
+		SrcSize = (UINT32)(strlen(pSrcData) + 1);
+		bSuccess = ClipboardSetData(clipboard, utf8StringFormatId, pSrcData,
+		                            SrcSize);
+		fprintf(stderr, "ClipboardSetData: %"PRId32"\n", bSuccess);
 		DstSize = 0;
 		pDstData = (char*) ClipboardGetData(clipboard, utf8StringFormatId, &DstSize);
-
 		fprintf(stderr, "ClipboardGetData: %s\n", pDstData);
-
 		free(pDstData);
 	}
 
@@ -66,15 +62,11 @@ int TestClipboardFormats(int argc, char* argv[])
 		UINT32 DstSize;
 		char* pSrcData;
 		WCHAR* pDstData;
-
 		DstSize = 0;
 		pDstData = (WCHAR*) ClipboardGetData(clipboard, CF_UNICODETEXT, &DstSize);
-
 		pSrcData = NULL;
 		ConvertFromUnicode(CP_UTF8, 0, pDstData, -1, &pSrcData, 0, NULL, NULL);
-
 		fprintf(stderr, "ClipboardGetData (synthetic): %s\n", pSrcData);
-
 		free(pDstData);
 		free(pSrcData);
 	}
@@ -84,16 +76,13 @@ int TestClipboardFormats(int argc, char* argv[])
 
 	for (index = 0; index < count; index++)
 	{
-		formatId = pFormatIds[index];
+		UINT32 formatId = pFormatIds[index];
 		formatName = ClipboardGetFormatName(clipboard, formatId);
-
-		fprintf(stderr, "Format: 0x%04X %s\n", formatId, formatName);
+		fprintf(stderr, "Format: 0x%08"PRIX32" %s\n", formatId, formatName);
 	}
 
 	free(pFormatIds);
-
 	ClipboardDestroy(clipboard);
-
 	return 0;
 }
 

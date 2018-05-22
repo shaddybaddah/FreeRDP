@@ -17,8 +17,8 @@
  * limitations under the License.
  */
 
-#ifndef __XF_CHANNELS_H
-#define __XF_CHANNELS_H
+#ifndef FREERDP_CLIENT_X11_CHANNELS_H
+#define FREERDP_CLIENT_X11_CHANNELS_H
 
 #include <freerdp/freerdp.h>
 #include <freerdp/client/channels.h>
@@ -28,11 +28,14 @@
 #include <freerdp/client/cliprdr.h>
 #include <freerdp/client/rdpgfx.h>
 #include <freerdp/client/encomsp.h>
+#include <freerdp/client/disp.h>
+#include <freerdp/client/geometry.h>
+#include <freerdp/client/video.h>
 
 int xf_on_channel_connected(freerdp* instance, const char* name, void* pInterface);
 int xf_on_channel_disconnected(freerdp* instance, const char* name, void* pInterface);
 
-void xf_OnChannelConnectedEventHandler(rdpContext* context, ChannelConnectedEventArgs* e);
-void xf_OnChannelDisconnectedEventHandler(rdpContext* context, ChannelDisconnectedEventArgs* e);
+void xf_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs* e);
+void xf_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEventArgs* e);
 
-#endif
+#endif /* FREERDP_CLIENT_X11_CHANNELS_H */
