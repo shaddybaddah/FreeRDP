@@ -3,6 +3,7 @@
  * rdp2tcp Virtual Channel Extension
  *
  * Copyright 2015 Artur Zaprzala
+ * Copyright 2018 André Hentschel
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,27 +35,15 @@ typedef struct {
 	int readfd;
 	int writefd;
 	pid_t pid;
+	void* InitHandle;
 	DWORD openHandle;
 	HANDLE copyThread;
 	HANDLE writeComplete;
-	CHANNEL_ENTRY_POINTS_FREERDP channelEntryPoints;
+	CHANNEL_ENTRY_POINTS_FREERDP_EX channelEntryPoints;
 	char buffer[4096];
 } Plugin;
 
-static wListDictionary *initHandles;
 static wListDictionary *openHandles;
-
-static void add_init_handle_data(void *pInitHandle, void *data) {
-	ListDictionary_Add(initHandles, pInitHandle, data);
-}
-
-static void *get_init_handle_data(void *pInitHandle) {
-	return ListDictionary_GetItemValue(initHandles, pInitHandle);
-}
-
-static void remove_init_handle_data(void *pInitHandle) {
-	ListDictionary_Remove(initHandles, pInitHandle);
-}
 
 static void add_open_handle_data(DWORD openHandle, void *data) {
 	ListDictionary_Add(openHandles, (void *)(size_t)openHandle, data);
@@ -67,7 +56,6 @@ static void *get_open_handle_data(DWORD openHandle) {
 static void remove_open_handle_data(DWORD openHandle) {
 	ListDictionary_Remove(openHandles, (void *)(size_t)openHandle);
 }
-
 
 static int init_external_addin(Plugin *plugin, char *args) {
 	int readpipe[2], writepipe[2];
@@ -131,7 +119,7 @@ static DWORD copyThread(void *data) {
 				printf("%02hhx", plugin->buffer[i]);
 			puts("");
 		}
-		if (plugin->channelEntryPoints.pVirtualChannelWrite(plugin->openHandle, plugin->buffer, n, NULL) != CHANNEL_RC_OK)
+		if (plugin->channelEntryPoints.pVirtualChannelWriteEx(plugin->InitHandle, plugin->openHandle, plugin->buffer, n, NULL) != CHANNEL_RC_OK)
 			return -1;
 		WaitForSingleObject(plugin->writeComplete, INFINITE);
 		ResetEvent(plugin->writeComplete);
@@ -139,7 +127,7 @@ static DWORD copyThread(void *data) {
 	return 0;
 }
 
-static void VCAPITYPE VirtualChannelOpenEvent(DWORD openHandle, UINT event, LPVOID pData, UINT32 dataLength, UINT32 totalLength, UINT32 dataFlags) {
+static void VCAPITYPE VirtualChannelOpenEventEx(LPVOID lpUserParam, DWORD openHandle, UINT event, LPVOID pData, UINT32 dataLength, UINT32 totalLength, UINT32 dataFlags) {
 	Plugin *plugin = get_open_handle_data(openHandle);
 	switch (event) {
 		case CHANNEL_EVENT_DATA_RECEIVED:;
@@ -165,7 +153,7 @@ static void VCAPITYPE VirtualChannelOpenEvent(DWORD openHandle, UINT event, LPVO
 			} else
 				status = write(plugin->writefd, pData, dataLength);
 			if (status == -1)
-				plugin->channelEntryPoints.pVirtualChannelClose(openHandle);
+				plugin->channelEntryPoints.pVirtualChannelCloseEx(plugin->InitHandle, openHandle);
 			break;
 		case CHANNEL_EVENT_WRITE_COMPLETE:
 			SetEvent(plugin->writeComplete);
@@ -173,11 +161,11 @@ static void VCAPITYPE VirtualChannelOpenEvent(DWORD openHandle, UINT event, LPVO
 	}
 }
 
-static void VCAPITYPE VirtualChannelInitEvent(LPVOID pInitHandle, UINT event, LPVOID pData, UINT dataLength) {
-	Plugin *plugin = get_init_handle_data(pInitHandle);
+static void VCAPITYPE VirtualChannelInitEventEx(LPVOID lpUserParam, LPVOID pInitHandle, UINT event, LPVOID pData, UINT dataLength) {
+	Plugin *plugin = lpUserParam;
 	switch (event) {
 		case CHANNEL_EVENT_CONNECTED:
-			if (plugin->channelEntryPoints.pVirtualChannelOpen(pInitHandle, &plugin->openHandle, RDP2TCP_CHAN_NAME, VirtualChannelOpenEvent) != CHANNEL_RC_OK)
+			if (plugin->channelEntryPoints.pVirtualChannelOpenEx(pInitHandle, &plugin->openHandle, RDP2TCP_CHAN_NAME, VirtualChannelOpenEventEx) != CHANNEL_RC_OK)
 				return;
 			add_open_handle_data(plugin->openHandle, plugin);
 			plugin->writeComplete = CreateEvent(NULL, TRUE, FALSE, NULL);
@@ -191,7 +179,6 @@ static void VCAPITYPE VirtualChannelInitEvent(LPVOID pInitHandle, UINT event, LP
 				CloseHandle(plugin->writeComplete);
 				remove_open_handle_data(plugin->openHandle);
 			}
-			remove_init_handle_data(pInitHandle);
 
 			close(plugin->writefd);
 			close(plugin->readfd);
@@ -202,11 +189,9 @@ static void VCAPITYPE VirtualChannelInitEvent(LPVOID pInitHandle, UINT event, LP
 	}
 }
 
-#define VirtualChannelEntry	rdp2tcp_VirtualChannelEntry
-BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
+#define VirtualChannelEntryEx	rdp2tcp_VirtualChannelEntryEx
+BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID pInitHandle)
 {
-	if (!initHandles)
-		initHandles = ListDictionary_New(TRUE);
 	if (!openHandles)
 		openHandles = ListDictionary_New(TRUE);
 
@@ -214,13 +199,16 @@ BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
 	if (!plugin)
 		return FALSE;
 
-	CHANNEL_ENTRY_POINTS_FREERDP *pEntryPointsEx = (CHANNEL_ENTRY_POINTS_FREERDP *)pEntryPoints;
-	assert(pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP) && pEntryPointsEx->MagicNumber == FREERDP_CHANNEL_MAGIC_NUMBER);
-	//*pEntryPointsEx->ppInterface = (void *)plugin;
-	plugin->channelEntryPoints = *pEntryPointsEx;
-	plugin->channelEntryPoints.pInterface = *plugin->channelEntryPoints.ppInterface;
-	plugin->channelEntryPoints.ppInterface = &plugin->channelEntryPoints.pInterface;
-	
+	CHANNEL_ENTRY_POINTS_FREERDP_EX* pEntryPointsEx;
+	pEntryPointsEx = (CHANNEL_ENTRY_POINTS_FREERDP_EX*) pEntryPoints;
+
+	if (!((pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX)) &&
+	    (pEntryPointsEx->MagicNumber == FREERDP_CHANNEL_MAGIC_NUMBER)))
+		return FALSE;
+
+	CopyMemory(&(plugin->channelEntryPoints), pEntryPoints, sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX));
+	plugin->InitHandle = pInitHandle;
+
 	if (init_external_addin(plugin, plugin->channelEntryPoints.pExtendedData) < 0)
 		return FALSE;
 
@@ -231,10 +219,8 @@ BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
 			CHANNEL_OPTION_ENCRYPT_RDP |
 			CHANNEL_OPTION_COMPRESS_RDP
 	};
-	LPVOID pInitHandle;
-	if (pEntryPoints->pVirtualChannelInit(&pInitHandle, &channelDef, 1, VIRTUAL_CHANNEL_VERSION_WIN2000, VirtualChannelInitEvent) != CHANNEL_RC_OK)
+	if (plugin->channelEntryPoints.pVirtualChannelInitEx(plugin, NULL, pInitHandle, &channelDef, 1, VIRTUAL_CHANNEL_VERSION_WIN2000, VirtualChannelInitEventEx) != CHANNEL_RC_OK)
 		return FALSE;
-	add_init_handle_data(pInitHandle, plugin);
 	return TRUE;
 }
 
